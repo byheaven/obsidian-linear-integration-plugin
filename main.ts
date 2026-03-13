@@ -305,8 +305,13 @@ export default class LinearPlugin extends Plugin {
             localConfig,
             this.settings,
             this,
-            async (issue) => {
-                await this.syncManager.updateNoteWithIssue(file, issue);
+            async (issue, workspaceId) => {
+                const workspace = this.settings.workspaces.find(w => w.id === workspaceId) ?? this.getDefaultWorkspace();
+                if (!workspace) {
+                    throw new Error('No workspace configured.');
+                }
+
+                await this.syncManager.updateNoteWithIssue(file, issue, workspace);
                 const content = await this.app.vault.read(file);
                 const reference = MarkdownParser.generateIssueReference(issue.id, issue.identifier);
                 const updatedContent = MarkdownParser.embedIssueReference(content, reference, 'bottom');
@@ -554,4 +559,3 @@ export default class LinearPlugin extends Plugin {
         debugLog.setDebugMode(this.settings.debugMode);
     }
 }
-

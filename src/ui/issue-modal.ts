@@ -36,7 +36,7 @@ export class IssueCreateModal extends Modal {
         private localConfig: LinearNoteConfig,
         private settings: LinearPluginSettings,
         private plugin: any,
-        private onSuccess: (issue: LinearIssue) => void
+        private onSuccess: (issue: LinearIssue, workspaceId: string) => Promise<void> | void
     ) {
         super(app);
     }
@@ -636,7 +636,7 @@ export class IssueCreateModal extends Modal {
             );
 
             debugLog.log('Created issue with labels:', this.labels);
-            this.onSuccess(issue);
+            await this.onSuccess(issue, this.selectedWorkspaceId);
             this.close();
         } catch (error) {
             new Notice(`Failed to create issue: ${(error as Error).message}`);

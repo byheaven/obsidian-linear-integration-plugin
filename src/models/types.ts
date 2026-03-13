@@ -142,6 +142,7 @@ export interface LinearUser {
 }
 
 export interface NoteFrontmatter {
+    linear_workspace_id?: string;
     linear_id?: string;
     linear_identifier?: string;
     linear_status?: string;
