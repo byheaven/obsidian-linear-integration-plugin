@@ -6,6 +6,7 @@ export interface LinearWorkspace {
     apiKey: string;
     syncFolder: string;   // vault path for this workspace's notes
     teamIds: string[];    // empty = sync all teams; non-empty = one call per teamId
+    cachedTeams?: { id: string; name: string }[];  // persisted after Test Connection
     lastSyncTime?: string;
     enabled: boolean;
 }

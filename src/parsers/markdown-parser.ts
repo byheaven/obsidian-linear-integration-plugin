@@ -1,5 +1,6 @@
-import { App, TFile, CachedMetadata } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { InlineTag, LinearNoteConfig } from '../models/types';
+import { parseFrontmatter } from '../utils/frontmatter';
 
 export class MarkdownParser {
     private static readonly TAG_PATTERNS = {
@@ -34,12 +35,10 @@ export class MarkdownParser {
     static parseNoteConfig(app: App, file: TFile, content: string): LinearNoteConfig {
         const config: LinearNoteConfig = {};
         
-        // Parse frontmatter config using metadata cache
-        const cachedMetadata: CachedMetadata | null = app.metadataCache.getFileCache(file);
-        
-        if (cachedMetadata?.frontmatter?.linear_config) {
-            const linearConfig = cachedMetadata.frontmatter.linear_config;
-            
+        // Parse frontmatter config using the shared parseFrontmatter utility
+        const linearConfig = (parseFrontmatter(app, file) as any).linear_config;
+
+        if (linearConfig) {
             if (linearConfig.workspace) config.workspace = linearConfig.workspace;
             if (linearConfig.team) config.team = linearConfig.team;
             if (linearConfig.project) config.project = linearConfig.project;

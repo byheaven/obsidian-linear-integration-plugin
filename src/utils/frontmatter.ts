@@ -1,6 +1,8 @@
 import { App, TFile, CachedMetadata } from 'obsidian';
 import { NoteFrontmatter } from '../models/types';
 
+// Obsidian injects a `position` key into every frontmatter object — never read or write it.
+const OBSIDIAN_INTERNAL_FM_KEY = 'position';
 
 export function parseFrontmatter(app: App, file: TFile): NoteFrontmatter {
     const cachedMetadata: CachedMetadata | null = app.metadataCache.getFileCache(file);
@@ -13,7 +15,7 @@ export function parseFrontmatter(app: App, file: TFile): NoteFrontmatter {
     const result: NoteFrontmatter = {} as NoteFrontmatter;
     
     Object.entries(frontmatter).forEach(([key, value]) => {
-        if (key !== 'position') {
+        if (key !== OBSIDIAN_INTERNAL_FM_KEY) {
             (result as any)[key] = value;
         }
     });
@@ -28,7 +30,7 @@ export async function updateFrontmatter(app: App, file: TFile, newFrontmatter: N
         // since Obsidian's YAML serializer strips quotes from [[...]] strings when
         // it rewrites the entire frontmatter block.
         Object.entries(newFrontmatter).forEach(([key, value]) => {
-            if (key !== 'position' && value !== undefined && value !== null) {
+            if (key !== OBSIDIAN_INTERNAL_FM_KEY && value !== undefined && value !== null) {
                 frontmatter[key] = value;
             }
         });

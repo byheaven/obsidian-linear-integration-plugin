@@ -166,140 +166,176 @@ export class LinearSettingsTab extends PluginSettingTab {
         };
         renderDefaultDropdown();
 
-        // Workspace list
-        const workspaceListEl = containerEl.createDiv({ cls: 'linear-workspace-list' });
+        // ── Tab-based workspace UI ────────────────────────────────────────────────
+        const tabsWrapper = containerEl.createDiv({ cls: 'linear-workspace-tabs' });
+        const tabBar = tabsWrapper.createDiv({ cls: 'linear-workspace-tab-bar' });
+        const tabContent = tabsWrapper.createDiv({ cls: 'linear-workspace-tab-content' });
 
-        const renderWorkspaceList = () => {
-            workspaceListEl.empty();
-            this.plugin.settings.workspaces.forEach((workspace: LinearWorkspace, index: number) => {
-                const row = workspaceListEl.createDiv({ cls: 'linear-workspace-row' });
-                const header = row.createDiv({ cls: 'linear-workspace-header' });
+        let activeTabIndex = 0;
 
-                // Enabled toggle
-                const toggle = header.createEl('input', { type: 'checkbox' });
-                toggle.checked = workspace.enabled;
-                toggle.addEventListener('change', async () => {
-                    workspace.enabled = toggle.checked;
+        const renderWorkspaceContent = (workspace: LinearWorkspace, index: number) => {
+            tabContent.empty();
+
+            // Enabled toggle
+            new Setting(tabContent)
+                .setName('Enabled')
+                .setDesc('Include this workspace in sync operations')
+                .addToggle(toggle => toggle
+                    .setValue(workspace.enabled)
+                    .onChange(async val => {
+                        workspace.enabled = val;
+                        await this.plugin.saveSettings();
+                        renderDefaultDropdown();
+                    })
+                );
+
+            // Name
+            new Setting(tabContent).setName('Name').addText(text =>
+                text.setValue(workspace.name).onChange(async val => {
+                    workspace.name = val;
                     await this.plugin.saveSettings();
+                    // Update tab label without full re-render
+                    const tab = tabBar.querySelectorAll('.linear-workspace-tab')[index] as HTMLElement;
+                    if (tab) tab.textContent = val || `Workspace ${index + 1}`;
                     renderDefaultDropdown();
-                });
+                })
+            );
 
-                header.createSpan({ text: ` ${workspace.name || `Workspace ${index + 1}`}` });
-                if (workspace.syncFolder) header.createSpan({ text: ` · ${workspace.syncFolder}`, cls: 'linear-workspace-folder' });
+            // Forward reference — assigned after teamsContainer is created below
+            let renderTeamsCheckboxes: (teams: { id: string; name: string }[]) => void;
 
-                // Expand button
-                let expanded = !workspace.name; // auto-expand new workspaces
-                const expandBtn = header.createEl('button', { text: expanded ? '▲' : '▼' });
-                const details = row.createDiv({ cls: 'linear-workspace-details' });
-                details.style.display = expanded ? 'block' : 'none';
-                expandBtn.addEventListener('click', () => {
-                    expanded = !expanded;
-                    details.style.display = expanded ? 'block' : 'none';
-                    expandBtn.textContent = expanded ? '▲' : '▼';
-                });
-
-                // Delete button
-                const deleteBtn = header.createEl('button', { text: '✕' });
-                deleteBtn.addEventListener('click', async () => {
-                    const msg = workspace.lastSyncTime
-                        ? `Delete "${workspace.name || 'this workspace'}"? Sync history will be lost.`
-                        : `Delete "${workspace.name || 'this workspace'}"?`;
-                    if (confirm(msg)) {
-                        this.plugin.settings.workspaces.splice(index, 1);
-                        if (this.plugin.settings.defaultWorkspaceId === workspace.id) {
-                            this.plugin.settings.defaultWorkspaceId = null;
-                        }
-                        await this.plugin.saveSettings();
-                        renderWorkspaceList();
-                        renderDefaultDropdown();
-                    }
-                });
-
-                // ── Expanded details ──────────────────────────────────────────────
-
-                // Name field
-                new Setting(details).setName('Name').addText(text =>
-                    text.setValue(workspace.name).onChange(async val => {
-                        workspace.name = val;
-                        await this.plugin.saveSettings();
-                        // Update header label in-place without re-rendering the whole list
-                        const nameSpan = header.querySelector('span');
-                        if (nameSpan) nameSpan.textContent = ` ${val || `Workspace ${index + 1}`}`;
-                        renderDefaultDropdown();
-                    })
-                );
-
-                // API Key + Test Connection
-                let teamsSelect: HTMLSelectElement | null = null;
-                const apiKeySetting = new Setting(details).setName('API Key').addText(text => {
-                    text.inputEl.type = 'password';
-                    text.setValue(workspace.apiKey).onChange(async val => {
-                        workspace.apiKey = val;
-                        await this.plugin.saveSettings();
-                    });
-                });
-                apiKeySetting.addButton(btn =>
-                    btn.setButtonText('Test Connection').onClick(async () => {
-                        if (!workspace.apiKey) { new Notice('Enter an API key first.'); return; }
-                        btn.setButtonText('Testing…').setDisabled(true);
-                        try {
-                            const client = new LinearClient(workspace.apiKey);
-                            const ok = await client.testConnection();
-                            if (!ok) {
-                                new Notice('Connection failed. Check the API key.');
-                                return;
-                            }
-                            new Notice('Connected!');
-                            try {
-                                const teams = await client.getTeams();
-                                if (teamsSelect) {
-                                    teamsSelect.replaceChildren();
-                                    teams.forEach(t => {
-                                        const opt = teamsSelect!.createEl('option', { text: t.name, value: t.id });
-                                        opt.selected = workspace.teamIds.includes(t.id);
-                                    });
-                                }
-                            } catch {
-                                new Notice('Connected, but failed to load teams.');
-                            }
-                        } catch {
-                            new Notice('Connection failed.');
-                        } finally {
-                            btn.setButtonText('Test Connection').setDisabled(false);
-                        }
-                    })
-                );
-
-                // Sync Folder
-                new Setting(details).setName('Sync folder').addText(text =>
-                    text.setPlaceholder('Linear/Work').setValue(workspace.syncFolder).onChange(async val => {
-                        workspace.syncFolder = val;
-                        await this.plugin.saveSettings();
-                    })
-                );
-
-                // Teams multi-select
-                const teamsSetting = new Setting(details)
-                    .setName('Teams')
-                    .setDesc('Leave empty to sync all teams. Click "Test Connection" to load options.');
-                teamsSelect = teamsSetting.controlEl.createEl('select');
-                teamsSelect.multiple = true;
-                teamsSelect.style.minHeight = '80px';
-                // Show previously saved teamIds as placeholder options until Test Connection is clicked
-                workspace.teamIds.forEach(tid => {
-                    teamsSelect!.createEl('option', { text: tid, value: tid }).selected = true;
-                });
-                teamsSelect.addEventListener('change', async () => {
-                    workspace.teamIds = Array.from(teamsSelect!.selectedOptions).map(o => o.value);
+            // API Key + Test Connection
+            const apiKeySetting = new Setting(tabContent).setName('API Key').addText(text => {
+                text.inputEl.type = 'password';
+                text.setValue(workspace.apiKey).onChange(async val => {
+                    workspace.apiKey = val;
                     await this.plugin.saveSettings();
                 });
             });
-        };
-        renderWorkspaceList();
+            apiKeySetting.addButton(btn =>
+                btn.setButtonText('Test Connection').onClick(async () => {
+                    if (!workspace.apiKey) { new Notice('Enter an API key first.'); return; }
+                    btn.setButtonText('Testing…').setDisabled(true);
+                    try {
+                        const client = new LinearClient(workspace.apiKey);
+                        const ok = await client.testConnection();
+                        if (!ok) { new Notice('Connection failed. Check the API key.'); return; }
+                        new Notice('Connected!');
+                        try {
+                            const teams = await client.getTeams();
+                            workspace.cachedTeams = teams;
+                            await this.plugin.saveSettings();
+                            renderTeamsCheckboxes(teams);
+                        } catch {
+                            new Notice('Connected, but failed to load teams.');
+                        }
+                    } catch {
+                        new Notice('Connection failed.');
+                    } finally {
+                        btn.setButtonText('Test Connection').setDisabled(false);
+                    }
+                })
+            );
 
-        // Add Workspace button
-        new Setting(containerEl).addButton(btn =>
-            btn.setButtonText('+ Add Workspace').onClick(async () => {
+            // Sync Folder
+            new Setting(tabContent).setName('Sync folder').addText(text =>
+                text.setPlaceholder('Linear/Work').setValue(workspace.syncFolder).onChange(async val => {
+                    workspace.syncFolder = val;
+                    await this.plugin.saveSettings();
+                })
+            );
+
+            // Teams checkbox list
+            const teamsSetting = new Setting(tabContent)
+                .setName('Teams')
+                .setDesc('Leave empty to sync all teams. Click "Test Connection" above to load options.');
+            const teamsContainer = teamsSetting.controlEl.createDiv({ cls: 'linear-teams-container' });
+
+            renderTeamsCheckboxes = (teams: { id: string; name: string }[]) => {
+                teamsContainer.empty();
+                if (teams.length === 0) {
+                    if (workspace.teamIds.length > 0) {
+                        workspace.teamIds.forEach(tid => {
+                            const lbl = teamsContainer.createEl('label', { cls: 'linear-team-checkbox-label' });
+                            const cb = lbl.createEl('input', { type: 'checkbox' });
+                            cb.checked = true;
+                            cb.value = tid;
+                            cb.addEventListener('change', async () => {
+                                if (!cb.checked) {
+                                    workspace.teamIds = workspace.teamIds.filter(id => id !== tid);
+                                    lbl.remove();
+                                    await this.plugin.saveSettings();
+                                }
+                            });
+                            lbl.createSpan({ text: ` ${tid}` });
+                        });
+                        teamsContainer.createDiv({ text: 'Test connection to see all teams', cls: 'linear-teams-hint' });
+                    } else {
+                        teamsContainer.createDiv({ text: 'All teams — test connection to filter by team', cls: 'linear-teams-hint' });
+                    }
+                    return;
+                }
+                teams.forEach(t => {
+                    const lbl = teamsContainer.createEl('label', { cls: 'linear-team-checkbox-label' });
+                    const cb = lbl.createEl('input', { type: 'checkbox' });
+                    cb.checked = workspace.teamIds.includes(t.id);
+                    cb.value = t.id;
+                    cb.addEventListener('change', async () => {
+                        if (cb.checked) {
+                            if (!workspace.teamIds.includes(t.id)) workspace.teamIds.push(t.id);
+                        } else {
+                            workspace.teamIds = workspace.teamIds.filter(id => id !== t.id);
+                        }
+                        await this.plugin.saveSettings();
+                    });
+                    lbl.createSpan({ text: ` ${t.name}` });
+                });
+            };
+            // Use cached teams if available, so list persists across settings re-opens
+            renderTeamsCheckboxes(workspace.cachedTeams ?? []);
+
+            // Delete workspace
+            new Setting(tabContent)
+                .setName('Delete workspace')
+                .setDesc('Remove this workspace and all its settings')
+                .addButton(btn =>
+                    btn.setButtonText('Delete').setWarning().onClick(async () => {
+                        const msg = workspace.lastSyncTime
+                            ? `Delete "${workspace.name || 'this workspace'}"? Sync history will be lost.`
+                            : `Delete "${workspace.name || 'this workspace'}"?`;
+                        if (confirm(msg)) {
+                            this.plugin.settings.workspaces.splice(index, 1);
+                            if (this.plugin.settings.defaultWorkspaceId === workspace.id) {
+                                this.plugin.settings.defaultWorkspaceId = null;
+                            }
+                            await this.plugin.saveSettings();
+                            activeTabIndex = Math.max(0, index - 1);
+                            renderTabs();
+                            renderDefaultDropdown();
+                        }
+                    })
+                );
+        };
+
+        const renderTabs = () => {
+            tabBar.empty();
+            tabContent.empty();
+            const workspaces = this.plugin.settings.workspaces;
+
+            workspaces.forEach((ws: LinearWorkspace, i: number) => {
+                const tab = tabBar.createEl('button', {
+                    text: ws.name || `Workspace ${i + 1}`,
+                    cls: `linear-workspace-tab${i === activeTabIndex ? ' is-active' : ''}`,
+                });
+                tab.addEventListener('click', () => {
+                    activeTabIndex = i;
+                    renderTabs();
+                });
+            });
+
+            // "+" tab to add a workspace
+            const addTab = tabBar.createEl('button', { text: '+', cls: 'linear-workspace-tab linear-workspace-tab-add' });
+            addTab.addEventListener('click', async () => {
                 this.plugin.settings.workspaces.push({
                     id: crypto.randomUUID(),
                     name: '',
@@ -308,11 +344,20 @@ export class LinearSettingsTab extends PluginSettingTab {
                     teamIds: [],
                     enabled: true,
                 });
+                activeTabIndex = this.plugin.settings.workspaces.length - 1;
                 await this.plugin.saveSettings();
-                renderWorkspaceList();
+                renderTabs();
                 renderDefaultDropdown();
-            })
-        );
+            });
+
+            if (workspaces.length > 0) {
+                renderWorkspaceContent(workspaces[activeTabIndex], activeTabIndex);
+            } else {
+                tabContent.createDiv({ text: 'No workspaces configured. Click + to add one.', cls: 'linear-teams-hint' });
+            }
+        };
+
+        renderTabs();
 
         new Setting(containerEl).setName('Synchronization').setHeading();
 
