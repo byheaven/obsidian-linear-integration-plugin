@@ -121,17 +121,10 @@ export class SyncManager {
             linear_labels: issue.labels.nodes.map(label => label.name)
         };
 
-        // For existing notes, only update frontmatter to preserve user content
-        if (!isNewNote) {
-            await updateFrontmatter(this.app, file, updatedFrontmatter);
-        } else {
-            // For new notes, generate full content with frontmatter
-            const fullContent = this.addFrontmatterToContent(
-                this.generateNoteContent(issue),
-                updatedFrontmatter
-            );
-            await this.app.vault.modify(file, fullContent);
-        }
+        // Always use processFrontMatter to update frontmatter — this preserves
+        // user-defined properties (including quoted wikilinks like "[[Note]]")
+        // and never replaces existing note content.
+        await updateFrontmatter(this.app, file, updatedFrontmatter);
 
         return isNewNote;
     }
@@ -144,25 +137,6 @@ export class SyncManager {
     async getLinearIdFromNote(file: TFile): Promise<string | null> {
         const frontmatter = await this.getFrontmatter(file);
         return frontmatter.linear_id || null;
-    }
-
-    private addFrontmatterToContent(content: string, frontmatter: NoteFrontmatter): string {
-        const yamlLines = ['---'];
-        
-        Object.entries(frontmatter).forEach(([key, value]) => {
-            if (value !== undefined && value !== null) {
-                if (Array.isArray(value)) {
-                    yamlLines.push(`${key}:`);
-                    value.forEach(item => yamlLines.push(`  - ${item}`));
-                } else {
-                    yamlLines.push(`${key}: ${value}`);
-                }
-            }
-        });
-        
-        yamlLines.push('---', '');
-        
-        return yamlLines.join('\n') + content;
     }
 
     private async ensureSyncFolder(): Promise<void> {
