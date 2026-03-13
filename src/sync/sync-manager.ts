@@ -1,39 +1,55 @@
-import { debugLog } from '../utils/debug';
 import { App, TFile } from 'obsidian';
 import { LinearClient } from '../api/linear-client';
-import { LinearIssue, LinearPluginSettings, NoteFrontmatter, SyncResult } from '../models/types';
+import { LinearIssue, LinearWorkspace, LinearPluginSettings, NoteFrontmatter, SyncResult } from '../models/types';
 import { parseFrontmatter, updateFrontmatter } from '../utils/frontmatter';
 
 export class SyncManager {
     constructor(
         private app: App,
-        private linearClient: LinearClient,
         private settings: LinearPluginSettings,
         private plugin: any
     ) {}
 
     async syncAll(): Promise<SyncResult> {
-        const result: SyncResult = {
-            created: 0,
-            updated: 0,
-            errors: [],
-            conflicts: []
-        };
+        const result: SyncResult = { created: 0, updated: 0, errors: [], conflicts: [] };
+        const enabled = this.settings.workspaces.filter(w => w.enabled);
+        if (enabled.length === 0) return result;
+
+        const settled = await Promise.allSettled(enabled.map(w => this.syncWorkspace(w)));
+
+        settled.forEach((r, i) => {
+            if (r.status === 'fulfilled') {
+                result.created += r.value.created;
+                result.updated += r.value.updated;
+                result.errors.push(...r.value.errors);
+                result.conflicts.push(...r.value.conflicts);
+            } else {
+                result.errors.push(`[${enabled[i].id}] Sync failed: ${r.reason}`);
+            }
+        });
+
+        return result;
+    }
+
+    private async syncWorkspace(workspace: LinearWorkspace): Promise<SyncResult> {
+        const result: SyncResult = { created: 0, updated: 0, errors: [], conflicts: [] };
+        const client = new LinearClient(workspace.apiKey);
 
         try {
-            // Ensure sync folder exists
-            await this.ensureSyncFolder();
+            await this.ensureSyncFolder(workspace.syncFolder);
 
-            // Get last sync time
-            const lastSync = await this.getLastSyncTime();
+            let issues: LinearIssue[] = [];
+            if (workspace.teamIds.length === 0) {
+                issues = await client.getIssues(undefined, workspace.lastSyncTime);
+            } else {
+                const batches = await Promise.all(
+                    workspace.teamIds.map(tid => client.getIssues(tid, workspace.lastSyncTime))
+                );
+                issues = batches.flat();
+            }
 
-            // Fetch issues from Linear
-            const issues = await this.linearClient.getIssues(
-                this.settings.teamId || undefined,
-                lastSync
-            );
+            if (issues.length === 0) return result;
 
-            // Build vault-wide index of all notes linked to Linear issues (one-time scan)
             const linkedNotes = new Map<string, TFile>();
             for (const file of this.app.vault.getMarkdownFiles()) {
                 const fm = parseFrontmatter(this.app, file);
@@ -41,41 +57,35 @@ export class SyncManager {
                 if (fm.linear_identifier) linkedNotes.set(fm.linear_identifier, file);
             }
 
-            // Process each issue
             for (const issue of issues) {
                 try {
-                    const file = await this.findOrCreateNoteForIssue(issue, linkedNotes);
+                    const file = await this.findOrCreateNoteForIssue(issue, linkedNotes, workspace.syncFolder);
                     const wasCreated = await this.updateNoteWithIssue(file, issue);
-                    
-                    if (wasCreated) {
-                        result.created++;
-                    } else {
-                        result.updated++;
-                    }
+                    if (wasCreated) result.created++;
+                    else result.updated++;
                 } catch (error) {
-                    result.errors.push(`Failed to sync issue ${issue.identifier}: ${(error as Error).message}`);
+                    result.errors.push(`[${workspace.id}] Failed to sync ${issue.identifier}: ${(error as Error).message}`);
                 }
             }
 
-            // Update last sync time
-            await this.setLastSyncTime(new Date().toISOString());
+            // Only update lastSyncTime on success
+            workspace.lastSyncTime = new Date().toISOString();
+            await this.plugin.saveSettings();
 
         } catch (error) {
-            result.errors.push(`Sync failed: ${(error as Error).message}`);
+            result.errors.push(`[${workspace.id}] Sync failed: ${(error as Error).message}`);
+            // Do NOT update lastSyncTime — next sync retries from last successful point
         }
 
         return result;
     }
 
-    async findOrCreateNoteForIssue(issue: LinearIssue, linkedNotes: Map<string, TFile>): Promise<TFile> {
-        // O(1) lookup across entire vault
+    async findOrCreateNoteForIssue(issue: LinearIssue, linkedNotes: Map<string, TFile>, syncFolder: string): Promise<TFile> {
         const existing = linkedNotes.get(issue.id) || linkedNotes.get(issue.identifier);
         if (existing) return existing;
 
-        // No existing note found — create in sync folder
-        await this.ensureSyncFolder();
         const filename = this.sanitizeFilename(`${issue.identifier} - ${issue.title}.md`);
-        const filepath = `${this.settings.syncFolder}/${filename}`;
+        const filepath = `${syncFolder}/${filename}`;
         const content = this.generateNoteContent(issue);
         return await this.app.vault.create(filepath, content);
     }
@@ -137,10 +147,10 @@ export class SyncManager {
         return frontmatter.linear_id || null;
     }
 
-    private async ensureSyncFolder(): Promise<void> {
-        const folder = this.app.vault.getAbstractFileByPath(this.settings.syncFolder);
+    private async ensureSyncFolder(syncFolder: string): Promise<void> {
+        const folder = this.app.vault.getAbstractFileByPath(syncFolder);
         if (!folder) {
-            await this.app.vault.createFolder(this.settings.syncFolder);
+            await this.app.vault.createFolder(syncFolder);
         }
     }
 
@@ -151,20 +161,4 @@ export class SyncManager {
             .trim();
     }
 
-    private async getLastSyncTime(): Promise<string | undefined> {
-        // Get from plugin settings instead of separate file
-        return this.settings.lastSyncTime;
-    }
-
-    private async setLastSyncTime(time: string): Promise<void> {
-        try {
-            // Update plugin settings
-            this.settings.lastSyncTime = time;
-            // Save settings (you'll need access to the plugin instance)
-            await this.plugin.saveSettings();
-            // This requires passing the plugin instance to SyncManager
-        } catch (error) {
-            debugLog.error('Failed to save last sync time:', error);
-        }
-    }    
 }

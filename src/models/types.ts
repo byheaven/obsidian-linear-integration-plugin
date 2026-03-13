@@ -1,17 +1,26 @@
 import { TFile } from 'obsidian';
-export interface LinearPluginSettings {
+
+export interface LinearWorkspace {
+    id: string;           // locally-generated UUID
+    name: string;         // user display name, e.g. "Work", "Personal"
     apiKey: string;
-    teamId: string;
-    syncFolder: string;
+    syncFolder: string;   // vault path for this workspace's notes
+    teamIds: string[];    // empty = sync all teams; non-empty = one call per teamId
+    lastSyncTime?: string;
+    enabled: boolean;
+}
+
+export interface LinearPluginSettings {
+    workspaces: LinearWorkspace[];
+    settingsVersion: number;
+    defaultWorkspaceId: string | null;
     autoSync: boolean;
-    autoSyncInterval: number; // minutes
+    autoSyncInterval: number;
     includeDescription: boolean;
     includeComments: boolean;
     statusMapping: Record<string, string>;
     noteTemplate: string;
     secureTokenStorage: boolean;
-    multiWorkspaceSupport: boolean;
-    workspaces: LinearWorkspace[];
     inlineCommentMirroring: boolean;
     kanbanGeneration: boolean;
     agendaGeneration: boolean;
@@ -20,15 +29,14 @@ export interface LinearPluginSettings {
     autocompleteEnabled: boolean;
     quickEditEnabled: boolean;
     tooltipsEnabled: boolean;
-    lastSyncTime?: string;
     autoFillFromExpressions: boolean;
     debugMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: LinearPluginSettings = {
-    apiKey: '',
-    teamId: '',
-    syncFolder: 'Linear Issues',
+    workspaces: [],
+    settingsVersion: 1,
+    defaultWorkspaceId: null,
     autoSync: false,
     autoSyncInterval: 15,
     includeDescription: true,
@@ -56,8 +64,6 @@ export const DEFAULT_SETTINGS: LinearPluginSettings = {
 ---
 *Last synced: {{lastSync}}*`,
     secureTokenStorage: true,
-    multiWorkspaceSupport: false,
-    workspaces: [],
     inlineCommentMirroring: true,
     kanbanGeneration: false,
     agendaGeneration: false,
@@ -154,13 +160,6 @@ export interface SyncResult {
     updated: number;
     errors: string[];
     conflicts: ConflictInfo[];
-}
-
-export interface LinearWorkspace {
-    id: string;
-    name: string;
-    apiKey: string;
-    isDefault: boolean;
 }
 
 export interface ConflictInfo {
