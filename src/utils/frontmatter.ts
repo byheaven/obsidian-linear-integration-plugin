@@ -23,16 +23,12 @@ export function parseFrontmatter(app: App, file: TFile): NoteFrontmatter {
 
 export async function updateFrontmatter(app: App, file: TFile, newFrontmatter: NoteFrontmatter): Promise<void> {
     await app.fileManager.processFrontMatter(file, (frontmatter) => {
-        // Clear existing frontmatter
-        Object.keys(frontmatter).forEach(key => {
-            if (key !== 'position') { // Don't delete Obsidian's internal position property
-                delete frontmatter[key];
-            }
-        });
-        
-        // Add new frontmatter properties
+        // Only update/add the provided keys — never delete user-defined properties.
+        // This preserves wikilink values like "[[AMIO]]" that the user set manually,
+        // since Obsidian's YAML serializer strips quotes from [[...]] strings when
+        // it rewrites the entire frontmatter block.
         Object.entries(newFrontmatter).forEach(([key, value]) => {
-            if (value !== undefined && value !== null) {
+            if (key !== 'position' && value !== undefined && value !== null) {
                 frontmatter[key] = value;
             }
         });
