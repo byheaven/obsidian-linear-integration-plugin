@@ -26,7 +26,7 @@ export interface LinearWorkspace {
     teamIds: string[];    // empty array = sync all teams; otherwise one call per teamId
     lastSyncTime?: string;
     enabled: boolean;
-    // NOTE: the previous `isDefault` field is removed — default is always first enabled workspace
+    // NOTE: the previous `isDefault` field is removed — default workspace is tracked via settings.defaultWorkspaceId
 }
 ```
 
@@ -42,8 +42,9 @@ export interface LinearWorkspace {
 - `multiWorkspaceSupport`
 - `isDefault` (via `LinearWorkspace`)
 
-**Added field:**
+**Added fields:**
 - `settingsVersion: number` — currently `1`. On plugin load, if stored version differs from the current version, the plugin resets to `DEFAULT_SETTINGS` and saves. This is the clean-break mechanism that replaces migration.
+- `defaultWorkspaceId: string` — the `id` of the workspace used for autocomplete, `IssueCreateModal` default, Kanban/Agenda generation, and all other single-client features. Empty string = no default set. Configurable in the Settings UI.
 
 **Retained fields** (complete list):
 - `workspaces: LinearWorkspace[]`
@@ -66,7 +67,7 @@ export interface LinearWorkspace {
 - `tooltipsEnabled: boolean`
 - `autoFillFromExpressions: boolean`
 
-**`DEFAULT_SETTINGS`** must be updated to remove the five deleted fields and add `workspaces: []` and `settingsVersion: 1`.
+**`DEFAULT_SETTINGS`** must be updated to remove the five deleted fields and add `workspaces: []`, `settingsVersion: 1`, and `defaultWorkspaceId: ''`.
 
 ---
 
@@ -132,12 +133,22 @@ Replaces the single `this.linearClient` field on the plugin class. To avoid crea
 private _clientCache = new Map<string, LinearClient>();
 
 getDefaultClient(): LinearClient | null {
-    const workspace = this.settings.workspaces.find(w => w.enabled);
+    const id = this.settings.defaultWorkspaceId;
+    const workspace = id
+        ? this.settings.workspaces.find(w => w.id === id && w.enabled)
+        : this.settings.workspaces.find(w => w.enabled); // fallback if none set
     if (!workspace) return null;
     if (!this._clientCache.has(workspace.id)) {
         this._clientCache.set(workspace.id, new LinearClient(workspace.apiKey));
     }
     return this._clientCache.get(workspace.id)!;
+}
+
+getDefaultWorkspace(): LinearWorkspace | null {
+    const id = this.settings.defaultWorkspaceId;
+    return (id
+        ? this.settings.workspaces.find(w => w.id === id && w.enabled)
+        : this.settings.workspaces.find(w => w.enabled)) ?? null;
 }
 
 // Called inside saveSettings():
@@ -146,7 +157,7 @@ this._clientCache.clear();
 
 **Startup initialization:** `KanbanGenerator`, `AgendaGenerator`, `CommentMirror`, `LinearAutocompleteSystem`, and `BatchOperationManager` are constructed at startup with `plugin.getDefaultClient()` (which may be `null`). Each class must accept `LinearClient | null` in its constructor and guard at method entry: show `new Notice('No workspace configured.')` and return early when the client is null.
 
-**`KanbanGenerator` and `AgendaGenerator` sync folder:** These classes currently write output to `settings.syncFolder`. After removal of that field, they use the first enabled workspace's `syncFolder` instead. Concretely: read `this.settings.workspaces.find(w => w.enabled)?.syncFolder ?? ''` at generation time.
+**`KanbanGenerator` and `AgendaGenerator` sync folder:** These classes use `plugin.getDefaultWorkspace()?.syncFolder ?? ''` at generation time.
 
 **Empty/disabled state:** Plugin loads normally. Commands that need a client show the Notice above. Auto-sync fires `syncAll()` which returns an empty result silently.
 
@@ -157,6 +168,8 @@ this._clientCache.clear();
 ### Workspace Management Section
 
 Replaces the current top-level API Key / Team / Sync Folder fields. Positioned at the top of the settings tab.
+
+**Default workspace selector** — a dropdown at the top of the section listing all enabled workspaces by name. Selection updates `settings.defaultWorkspaceId`. Used by autocomplete, `IssueCreateModal` initial selection, Kanban/Agenda generation.
 
 **List view** — each workspace renders as a collapsed row:
 ```
@@ -200,10 +213,10 @@ The `workspace` field in `LinearNoteConfig` (currently `workspace?: string`) res
 
 | File | Change |
 |---|---|
-| `src/models/types.ts` | Update `LinearWorkspace`; remove 5 top-level fields; add `settingsVersion`; update `DEFAULT_SETTINGS` |
+| `src/models/types.ts` | Update `LinearWorkspace`; remove 5 top-level fields; add `settingsVersion`, `defaultWorkspaceId`; update `DEFAULT_SETTINGS` |
 | `src/sync/sync-manager.ts` | Remove `LinearClient` constructor param; add `syncWorkspace()`; rewrite `syncAll()`; parameterize `ensureSyncFolder()`, `getLastSyncTime()`, `setLastSyncTime()` |
-| `src/ui/settings-tab.ts` | Replace API Key/Team/Folder section with workspace management UI |
-| `main.ts` | Remove `this.linearClient` field; add `getDefaultClient()`; add version-check reset on load; update `SyncManager` constructor; replace `this.settings.teamId` call sites (Kanban ribbon + command) with `undefined` (generate Kanban for all teams of the default workspace) |
+| `src/ui/settings-tab.ts` | Replace API Key/Team/Folder section with workspace management UI; add default workspace dropdown |
+| `main.ts` | Remove `this.linearClient` field; add `getDefaultClient()`, `getDefaultWorkspace()`; add version-check reset on load; update `SyncManager` constructor; replace `this.settings.teamId` call sites with `undefined` |
 | `src/ui/issue-modal.ts` | Add workspace selector; workspace-change triggers team re-fetch |
 
 | `src/features/local-config-system.ts` | `KanbanGenerator` and `AgendaGenerator`: replace `settings.syncFolder` with first-enabled-workspace `syncFolder`. `BatchOperationManager`: constructor accepts `LinearClient \| null` and guards at method entry. |
