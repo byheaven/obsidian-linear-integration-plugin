@@ -26,6 +26,8 @@ export class IssueCreateModal extends Modal {
     private prioritySlider: any = null; 
     private labelsInput: any = null; 
     private isLoading: boolean = true;
+    private selectedWorkspaceId: string = '';
+    private updateTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(
         app: App,
@@ -33,6 +35,7 @@ export class IssueCreateModal extends Modal {
         private file: TFile,
         private localConfig: LinearNoteConfig,
         private settings: LinearPluginSettings,
+        private plugin: any,
         private onSuccess: (issue: LinearIssue) => void
     ) {
         super(app);
@@ -49,6 +52,10 @@ export class IssueCreateModal extends Modal {
         loadingEl.createEl('p', { text: '⏳ Loading Linear data...' });
 
         try {
+            // Initialize selected workspace
+            this.selectedWorkspaceId = this.plugin.settings.defaultWorkspaceId ||
+                (this.plugin.settings.workspaces.find((w: any) => w.enabled)?.id ?? '');
+
             // Load data first
             await this.loadInitialData();
             
@@ -79,6 +86,38 @@ export class IssueCreateModal extends Modal {
     }
 
     private buildForm(container: HTMLElement): void {
+        // Workspace selector — only show when 2+ enabled workspaces
+        const enabledWorkspaces = this.plugin.settings.workspaces.filter((w: any) => w.enabled);
+        if (enabledWorkspaces.length > 1) {
+            new Setting(container)
+                .setName('Workspace')
+                .addDropdown(dropdown => {
+                    enabledWorkspaces.forEach((w: any) => dropdown.addOption(w.id, w.name));
+                    dropdown.setValue(this.selectedWorkspaceId);
+                    dropdown.onChange(async (workspaceId: string) => {
+                        this.selectedWorkspaceId = workspaceId;
+                        const ws = this.plugin.settings.workspaces.find((w: any) => w.id === workspaceId);
+                        if (ws) {
+                            this.linearClient = new LinearClient(ws.apiKey);
+                            this.teamId = '';
+                            this.stateId = '';
+                            this.assigneeId = '';
+                            this.teams = [];
+                            this.states = [];
+                            container.empty();
+                            container.createEl('h2', { text: 'Create Linear issue' });
+                            await this.loadInitialData();
+                            this.buildForm(container);
+                            if (this.updateTimer) clearTimeout(this.updateTimer);
+                            this.updateTimer = setTimeout(() => {
+                                this.updateTimer = null;
+                                this.updateUIWithPrefilledValues();
+                            }, 50);
+                        }
+                    });
+                });
+        }
+
         // Title setting
         new Setting(container)
             .setName('Title')

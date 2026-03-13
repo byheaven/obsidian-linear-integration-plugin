@@ -304,6 +304,7 @@ export default class LinearPlugin extends Plugin {
             file,
             localConfig,
             this.settings,
+            this,
             async (issue) => {
                 await this.syncManager.updateNoteWithIssue(file, issue);
                 const content = await this.app.vault.read(file);
