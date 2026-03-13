@@ -1,5 +1,4 @@
 import { debugLog } from '../utils/debug';
-import { getFolderByPath } from '../utils/file-utils';
 import { App, TFile } from 'obsidian';
 import { LinearClient } from '../api/linear-client';
 import { LinearIssue, LinearPluginSettings, NoteFrontmatter, SyncResult } from '../models/types';
@@ -34,10 +33,18 @@ export class SyncManager {
                 lastSync
             );
 
+            // Build vault-wide index of all notes linked to Linear issues (one-time scan)
+            const linkedNotes = new Map<string, TFile>();
+            for (const file of this.app.vault.getMarkdownFiles()) {
+                const fm = parseFrontmatter(this.app, file);
+                if (fm.linear_id) linkedNotes.set(fm.linear_id, file);
+                if (fm.linear_identifier) linkedNotes.set(fm.linear_identifier, file);
+            }
+
             // Process each issue
             for (const issue of issues) {
                 try {
-                    const file = await this.findOrCreateNoteForIssue(issue);
+                    const file = await this.findOrCreateNoteForIssue(issue, linkedNotes);
                     const wasCreated = await this.updateNoteWithIssue(file, issue);
                     
                     if (wasCreated) {
@@ -60,24 +67,15 @@ export class SyncManager {
         return result;
     }
 
-    async findOrCreateNoteForIssue(issue: LinearIssue): Promise<TFile> {
-        //Refactored to avoid type assertion
-        const syncFolder = getFolderByPath(this.app.vault, this.settings.syncFolder);
-        
-        // Try to find existing note by Linear ID
-        for (const file of syncFolder.children) {
-            if (file instanceof TFile && file.extension === 'md') {
-                const frontmatter = await this.getFrontmatter(file);
-                if (frontmatter.linear_id === issue.id || frontmatter.linear_identifier === issue.identifier) {
-                    return file;
-                }
-            }
-        }
+    async findOrCreateNoteForIssue(issue: LinearIssue, linkedNotes: Map<string, TFile>): Promise<TFile> {
+        // O(1) lookup across entire vault
+        const existing = linkedNotes.get(issue.id) || linkedNotes.get(issue.identifier);
+        if (existing) return existing;
 
-        // Create new note
+        // No existing note found — create in sync folder
+        await this.ensureSyncFolder();
         const filename = this.sanitizeFilename(`${issue.identifier} - ${issue.title}.md`);
         const filepath = `${this.settings.syncFolder}/${filename}`;
-        
         const content = this.generateNoteContent(issue);
         return await this.app.vault.create(filepath, content);
     }
