@@ -48,6 +48,10 @@ export class SyncManager {
                 issues = batches.flat();
             }
 
+            // Always advance lastSyncTime on a successful fetch, even if no new issues
+            workspace.lastSyncTime = new Date().toISOString();
+            await this.plugin.saveSettings();
+
             if (issues.length === 0) return result;
 
             const linkedNotes = new Map<string, TFile>();
@@ -67,10 +71,6 @@ export class SyncManager {
                     result.errors.push(`[${workspace.id}] Failed to sync ${issue.identifier}: ${(error as Error).message}`);
                 }
             }
-
-            // Only update lastSyncTime on success
-            workspace.lastSyncTime = new Date().toISOString();
-            await this.plugin.saveSettings();
 
         } catch (error) {
             result.errors.push(`[${workspace.id}] Sync failed: ${(error as Error).message}`);

@@ -159,7 +159,7 @@ export class LinearSettingsTab extends PluginSettingTab {
                     if (w.id === this.plugin.settings.defaultWorkspaceId) opt.selected = true;
                 });
                 select.addEventListener('change', async () => {
-                    this.plugin.settings.defaultWorkspaceId = select.value;
+                    this.plugin.settings.defaultWorkspaceId = select.value || null;
                     await this.plugin.saveSettings();
                 });
             }
