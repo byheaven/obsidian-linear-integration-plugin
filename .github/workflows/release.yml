@@ -23,6 +23,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Bump version in manifest.json and versions.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const tag = process.env.TAG;
+            const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            manifest.version = tag;
+            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 4));
+            const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
+            versions[tag] = manifest.minAppVersion;
+            fs.writeFileSync('versions.json', JSON.stringify(versions, null, 2));
+            console.log('Bumped to', tag);
+          "
+
       - name: Build plugin
         run: npm run build
 
