@@ -26,6 +26,7 @@ export const cases: CaseDefinition[] = [
                     title: `Pulled ${context.runId} ${workspace.config.name}`,
                     description: `updated-from-linear ${context.runId} ${workspace.config.name}`,
                     stateId: workspace.state.id,
+                    projectId: workspace.alternateProject?.id ?? workspace.project?.id ?? null,
                     priority: 1,
                     labelNames: [`e2e-pull-${context.runId.toLowerCase()}`],
                     teamId: workspace.team.id
@@ -54,6 +55,8 @@ export const cases: CaseDefinition[] = [
                     linear_title: `Pushed ${context.runId} ${workspace.config.name}`,
                     linear_description: `updated-from-obsidian ${context.runId} ${workspace.config.name}`,
                     linear_status: workspace.state.name,
+                    linear_project: workspace.project?.name ?? '',
+                    linear_project_id: '',
                     linear_priority: 2,
                     linear_labels: [`e2e-push-${context.runId.toLowerCase()}`, workspace.config.name.toLowerCase()]
                 });
@@ -252,6 +255,20 @@ async function createIssueFromNote(context: E2EContext, workspace: WorkspaceRunt
     context.shared.localNotes.push(workspace.tempNotePath);
     await context.snapshotNote(`before-${workspace.config.name}`, workspace.tempNotePath);
     await waitForIndexedFile(context, workspace.tempNotePath);
+    await context.obsidian.eval(
+        `
+            (async () => {
+                const plugin = app.plugins.plugins["${context.options.pluginId}"];
+                if (!plugin) throw new Error("Plugin not loaded");
+                const workspace = plugin.settings.workspaces.find((entry) => entry.id === ${JSON.stringify(workspace.config.id)});
+                if (!workspace) throw new Error("Workspace not found");
+                workspace.defaultAssigneeId = ${JSON.stringify(workspace.user?.id ?? '')} || undefined;
+                workspace.defaultProjectId = ${JSON.stringify(workspace.project?.id ?? '')} || undefined;
+                await plugin.saveSettings();
+                return JSON.stringify({ configured: true });
+            })()
+        `
+    );
 
     const modalState = await context.obsidian.evalJson<{ modalText: string }>(
         `
@@ -297,7 +314,7 @@ async function createIssueFromNote(context: E2EContext, workspace: WorkspaceRunt
 
     await context.captureArtifact(`ws-001/modal-${workspace.config.name}.txt`, modalState.modalText);
 
-    await context.obsidian.eval(
+    const createResult = await context.obsidian.evalJson<{ clicked: boolean; linearId: string }>(
         `
             (async () => {
                 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -326,14 +343,26 @@ async function createIssueFromNote(context: E2EContext, workspace: WorkspaceRunt
         `
     );
 
-    const note = await waitForManagedNoteOnDisk(context, workspace.tempNotePath);
+    await syncAndCapture(context, `ws-001-${workspace.config.name.toLowerCase()}`);
+    const note = await readNoteFromDisk(context.options.vaultPath, workspace.tempNotePath);
+    await context.captureArtifact(`ws-001/note-${workspace.config.name}.md`, note.raw);
     assertManagedNoteShape(note);
     assertWorkspaceBinding(note.frontmatter, workspace);
     assert(note.frontmatter.linear_title === `E2E ${workspace.config.name} ${context.runId}`, 'Expected linear_title to mirror the source note title');
     assert(String(note.frontmatter.linear_description).includes(`seed-from-obsidian ${context.runId}`), 'Expected description to contain the note body');
     assert(!String(note.frontmatter.linear_description).includes('@team/'), 'Expected description to strip inline tags');
+    if (workspace.user) {
+        assert(note.frontmatter.linear_assignee_id === workspace.user.id, 'Expected workspace default assignee to populate the created issue');
+    } else {
+        assert(!note.frontmatter.linear_assignee_id, 'Expected issue to stay unassigned when the workspace team has no human assignee candidate');
+    }
+    if (workspace.project) {
+        assert(note.frontmatter.linear_project_id === workspace.project.id, 'Expected workspace default project to populate the created issue');
+    } else {
+        assert(!note.frontmatter.linear_project_id, 'Expected project to stay empty when the workspace has no available projects');
+    }
 
-    const issueId = String(note.frontmatter.linear_id);
+    const issueId = createResult.linearId;
     const issue = await workspace.client.getIssueById(issueId);
     assert(issue, `Expected Linear issue ${issueId} to exist`);
     workspace.issue = issue;
@@ -430,18 +459,6 @@ async function waitForIndexedFile(context: E2EContext, vaultRelativePath: string
 function extractDraftSection(body: string): string {
     const match = body.match(/## New Comment\s*([\s\S]*?)## Comments/);
     return match?.[1] ?? '';
-}
-
-async function waitForManagedNoteOnDisk(context: E2EContext, vaultRelativePath: string): Promise<Awaited<ReturnType<typeof readNoteFromDisk>>> {
-    for (let attempt = 0; attempt < 60; attempt++) {
-        const note = await readNoteFromDisk(context.options.vaultPath, vaultRelativePath);
-        if (note.frontmatter.linear_id && note.body.includes('## Linear Issue') && note.body.includes('## Comments')) {
-            return note;
-        }
-        await new Promise(resolve => setTimeout(resolve, 250));
-    }
-
-    throw new Error(`Timed out waiting for the managed note body to be written: ${vaultRelativePath}`);
 }
 
 async function waitForRemoteComment(workspace: WorkspaceRuntime, expectedComment: string): Promise<void> {

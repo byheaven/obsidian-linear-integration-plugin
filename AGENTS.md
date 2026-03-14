@@ -34,3 +34,5 @@ git push origin master && git push origin x.y.z
   managed note structure, issue creation, comments, workspace routing, or settings.
 - Any change to `SyncManager`, `LinearClient`, managed frontmatter fields, managed note body structure, or the
   create-issue flow must add or update at least one case under `tests/e2e/cases/`.
+- The E2E runner must never select agent-like Linear users as default assignee candidates. Only human team members
+  may be used; otherwise the test issue must remain unassigned.

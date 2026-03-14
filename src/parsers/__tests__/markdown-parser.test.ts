@@ -7,6 +7,7 @@ describe('MarkdownParser', () => {
             '',
             '@team/Dev',
             '@status/Backlog',
+            '@project/Alpha',
             '@priority/2',
             '@label/e2e-regression',
             '',

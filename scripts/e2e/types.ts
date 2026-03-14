@@ -4,6 +4,8 @@ export interface WorkspaceConfig {
     apiKey: string;
     syncFolder: string;
     teamIds: string[];
+    defaultAssigneeId?: string;
+    defaultProjectId?: string;
     lastSyncTime?: string;
     enabled: boolean;
 }
@@ -33,6 +35,12 @@ export interface LinearUser {
     email: string;
 }
 
+export interface LinearProject {
+    id: string;
+    name: string;
+    description?: string;
+}
+
 export interface LinearLabel {
     id: string;
     name: string;
@@ -43,9 +51,9 @@ export interface LinearComment {
     id: string;
     body: string;
     createdAt: string;
-    user: {
+    user?: {
         name: string;
-    };
+    } | null;
 }
 
 export interface LinearIssue {
@@ -67,6 +75,10 @@ export interface LinearIssue {
         id: string;
         name: string;
         key: string;
+    };
+    project?: {
+        id: string;
+        name: string;
     };
     priority: number;
     labels: {
@@ -90,6 +102,8 @@ export interface NoteFrontmatter {
     linear_status_id?: string;
     linear_assignee?: string;
     linear_assignee_id?: string;
+    linear_project?: string;
+    linear_project_id?: string;
     linear_team?: string;
     linear_team_id?: string;
     linear_url?: string;
@@ -131,12 +145,15 @@ export interface WorkspaceRuntime {
     team: LinearTeam;
     state: LinearState;
     user?: LinearUser;
+    project?: LinearProject;
+    alternateProject?: LinearProject;
     tempNotePath: string;
     issue?: LinearIssue;
 }
 
 export interface SharedState {
     originalDefaultWorkspaceId: string | null;
+    originalWorkspaceDefaults: Record<string, { defaultAssigneeId?: string; defaultProjectId?: string }>;
     workspacesById: Record<string, WorkspaceRuntime>;
     localNotes: string[];
     remoteIssues: Array<{ workspaceId: string; issueId: string }>;
@@ -181,8 +198,11 @@ export interface ObsidianCliLike {
 export interface LinearClientLike {
     getTeams(): Promise<LinearTeam[]>;
     getUsers(): Promise<LinearUser[]>;
+    getTeamMembers(teamId: string): Promise<LinearUser[]>;
+    getProjects(teamId?: string): Promise<LinearProject[]>;
     getTeamStates(teamId: string): Promise<LinearState[]>;
     getIssueById(id: string): Promise<LinearIssue | null>;
+    searchIssues(query: string): Promise<LinearIssue[]>;
     createIssue(input: {
         title: string;
         description: string;
@@ -191,6 +211,7 @@ export interface LinearClientLike {
         stateId?: string;
         priority?: number;
         labelNames?: string[];
+        projectId?: string;
     }): Promise<LinearIssue>;
     updateIssue(
         id: string,
@@ -199,6 +220,7 @@ export interface LinearClientLike {
             description: string;
             stateId: string;
             assigneeId: string | null;
+            projectId: string | null;
             priority: number;
             labelNames: string[];
             teamId: string;

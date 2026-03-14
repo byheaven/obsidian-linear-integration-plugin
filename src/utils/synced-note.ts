@@ -70,7 +70,8 @@ export function renderManagedNoteBody(
         lines.push('*No comments yet.*');
     } else {
         comments.forEach((comment, index) => {
-            lines.push(`### ${comment.user.name} - ${new Date(comment.createdAt).toLocaleString()}`, '');
+            const authorName = comment.user?.name || 'Linear';
+            lines.push(`### ${authorName} - ${new Date(comment.createdAt).toLocaleString()}`, '');
             lines.push(comment.body, '');
             if (index < comments.length - 1) {
                 lines.push('---', '');

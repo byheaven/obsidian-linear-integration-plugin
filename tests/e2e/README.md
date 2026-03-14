@@ -42,11 +42,12 @@ npm run e2e -- --vault-path /absolute/path/to/vault
 
 - reads the configured plugin settings from the target vault
 - selects the first two enabled workspaces
+- picks the default assignee candidate only from non-agent team members; if a workspace only has agent users, the test issue stays unassigned
 - creates temporary notes and issues using a `RUN_ID`
 - drives the plugin through Obsidian CLI debug commands
 - captures reports, snapshots, console output, and screenshots under `tests/e2e/artifacts/<RUN_ID>/`
-- deletes local temporary notes and any synced notes bound to the temporary test issues
-- permanently deletes remote temporary issues during cleanup
+- sweeps local temporary notes, synced notes, and temp source notes by `RUN_ID` during cleanup
+- sweeps remote temporary issues by `RUN_ID` and permanently deletes them during cleanup, even if a case failed before it could register the issue in memory
 
 ## Artifacts
 

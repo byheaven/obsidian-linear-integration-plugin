@@ -143,6 +143,41 @@
     background: var(--background-primary);
 }
 
+.linear-connection-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 6px;
+    padding: 0;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    pointer-events: none;
+    cursor: default;
+}
+
+.linear-connection-indicator svg.svg-icon {
+    width: 18px;
+    height: 18px;
+    stroke-width: 2.2px;
+}
+
+.linear-connection-indicator.is-idle {
+    color: var(--text-muted);
+}
+
+.linear-connection-indicator.is-testing {
+    color: var(--text-accent);
+}
+
+.linear-connection-indicator.is-success {
+    color: var(--color-green, #22c55e);
+}
+
+.linear-connection-indicator.is-failure {
+    color: var(--color-red, #ef4444);
+}
+
 /* Teams checkbox list */
 .linear-teams-container {
     display: flex;

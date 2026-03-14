@@ -2,14 +2,16 @@ import { debugLog } from '../utils/debug';
 import { setDefaultOption } from '../utils/dom-utils';
 import { App, Modal, Setting, TFile, Notice } from 'obsidian';
 import { LinearClient } from '../api/linear-client';
-import { LinearIssue, LinearTeam, LinearState, LinearUser, LinearNoteConfig, LinearPluginSettings } from '../models/types';
+import { LinearIssue, LinearNoteConfig, LinearPluginSettings, LinearProject, LinearState, LinearTeam, LinearUser } from '../models/types';
 import { MarkdownParser } from '../parsers/markdown-parser';
+import { IssueModalExpression, matchTeamId, resolveIssueModalDefaults } from './issue-modal-defaults';
 
 export class IssueCreateModal extends Modal {
     private title: string = '';
     private description: string = '';
     private teamId: string = '';
     private assigneeId: string = '';
+    private projectId: string = '';
     private stateId: string = '';
     private priority: number = 3;
     private labels: string[] = []; 
@@ -17,10 +19,12 @@ export class IssueCreateModal extends Modal {
     private teams: LinearTeam[] = [];
     private states: LinearState[] = [];
     private users: LinearUser[] = [];
+    private projects: LinearProject[] = [];
     // Note: availableLabels loaded but not used in UI yet - could be used for autocomplete later
     
     // UI elements to update after loading
     private teamDropdown: any = null;
+    private projectDropdown: any = null;
     private stateDropdown: any = null;
     private assigneeDropdown: any = null;
     private prioritySlider: any = null; 
@@ -28,6 +32,7 @@ export class IssueCreateModal extends Modal {
     private isLoading: boolean = true;
     private selectedWorkspaceId: string = '';
     private updateTimer: ReturnType<typeof setTimeout> | null = null;
+    private inlineExpressions: IssueModalExpression[] = [];
 
     constructor(
         app: App,
@@ -102,11 +107,14 @@ export class IssueCreateModal extends Modal {
                             this.teamId = '';
                             this.stateId = '';
                             this.assigneeId = '';
+                            this.projectId = '';
                             this.teams = [];
                             this.states = [];
+                            this.projects = [];
                             container.empty();
                             container.createEl('h2', { text: 'Create Linear issue' });
                             await this.loadInitialData();
+                            await this.prefillFromNote();
                             this.buildForm(container);
                             if (this.updateTimer) clearTimeout(this.updateTimer);
                             this.updateTimer = setTimeout(() => {
@@ -149,10 +157,29 @@ export class IssueCreateModal extends Modal {
                 dropdown.onChange(async (value) => {
                     this.teamId = value;
                     if (value) {
-                        await this.loadStatesForTeam(value);
+                        await Promise.all([
+                            this.loadStatesForTeam(value),
+                            this.loadProjectsForTeam(value)
+                        ]);
+                        this.applyResolvedDefaults();
+                    } else {
+                        this.states = [];
+                        this.projects = [];
+                        this.stateId = '';
+                        this.projectId = '';
                         this.populateStateDropdown();
+                        this.populateProjectDropdown();
                     }
                 });
+            });
+
+        new Setting(container)
+            .setName('Project')
+            .setDesc('Attach this issue to a project (optional)')
+            .addDropdown(dropdown => {
+                this.projectDropdown = dropdown;
+                this.populateProjectDropdown();
+                dropdown.onChange(value => this.projectId = value);
             });
 
         // State selection
@@ -231,6 +258,7 @@ export class IssueCreateModal extends Modal {
         debugLog.log('Priority to set:', this.priority);
         debugLog.log('Team ID to set:', this.teamId);
         debugLog.log('Assignee ID to set:', this.assigneeId);
+        debugLog.log('Project ID to set:', this.projectId);
         debugLog.log('State ID to set:', this.stateId);
         debugLog.log('Labels to set:', this.labels);
         // Update team dropdown
@@ -243,6 +271,11 @@ export class IssueCreateModal extends Modal {
         if (this.assigneeDropdown && this.assigneeId) {
             debugLog.log('Setting assignee dropdown to:', this.assigneeId);
             this.assigneeDropdown.setValue(this.assigneeId);
+        }
+
+        if (this.projectDropdown && this.projectId) {
+            debugLog.log('Setting project dropdown to:', this.projectId);
+            this.projectDropdown.setValue(this.projectId);
         }
         
         // Update state dropdown
@@ -297,8 +330,6 @@ export class IssueCreateModal extends Modal {
             [this.teams, this.users] = await Promise.all([
                 this.linearClient.getTeams(),
                 this.linearClient.getUsers()
-                // Note: Could load labels here for future autocomplete functionality
-                // this.linearClient.getLabels()
             ]);
             this.isLoading = false;
         } catch (error) {
@@ -340,6 +371,20 @@ export class IssueCreateModal extends Modal {
         }
     }
 
+    private populateProjectDropdown(): void {
+        if (!this.projectDropdown) return;
+
+        setDefaultOption(this.projectDropdown.selectEl, 'No project');
+
+        this.projects.forEach(project => {
+            this.projectDropdown.addOption(project.id, project.name);
+        });
+
+        if (this.projectId) {
+            this.projectDropdown.setValue(this.projectId);
+        }
+    }
+
     private populateAssigneeDropdown(): void {
         if (!this.assigneeDropdown) return;
         
@@ -365,6 +410,23 @@ export class IssueCreateModal extends Modal {
         }
     }
 
+    private async loadProjectsForTeam(teamId: string): Promise<void> {
+        try {
+            this.projects = await this.linearClient.getProjects(teamId);
+
+            if (this.projectId && !this.projects.some(project => project.id === this.projectId)) {
+                this.projectId = '';
+            }
+
+            this.populateProjectDropdown();
+        } catch (error) {
+            debugLog.error('Failed to load team projects:', (error as Error).message);
+            this.projects = [];
+            this.projectId = '';
+            this.populateProjectDropdown();
+        }
+    }
+
     private async prefillFromNote(): Promise<void> {
         try {
             const content = await this.app.vault.read(this.file);
@@ -385,7 +447,7 @@ export class IssueCreateModal extends Modal {
             }
             
             // Apply local config defaults (lower priority than expressions)
-            this.applyLocalConfigDefaults();
+            await this.applyLocalConfigDefaults();
             
         } catch (error) {
             debugLog.error('Failed to prefill from note:', error);
@@ -403,6 +465,7 @@ export class IssueCreateModal extends Modal {
             
             // Parse inline expressions with FIXED regex patterns
             const inlineExpressions = this.parseInlineExpressions(content);
+            this.inlineExpressions = inlineExpressions;
             debugLog.log('Parsed inline expressions:', inlineExpressions);
             
             // Apply frontmatter config first
@@ -416,22 +479,13 @@ export class IssueCreateModal extends Modal {
                 if (team) {
                     debugLog.log('Setting team from config:', team.name);
                     this.teamId = team.id;
-                    await this.loadStatesForTeam(team.id);
+                    await Promise.all([
+                        this.loadStatesForTeam(team.id),
+                        this.loadProjectsForTeam(team.id)
+                    ]);
                 }
             }
-            
-            if (config.assignee) {
-                const assigneeName = config.assignee;
-                const user = this.users.find(u => 
-                    u.name.toLowerCase() === assigneeName.toLowerCase() || 
-                    u.email.toLowerCase() === assigneeName.toLowerCase()
-                );
-                if (user) {
-                    debugLog.log('Setting assignee from config:', user.name);
-                    this.assigneeId = user.id;
-                }
-            }
-            
+
             if (config.priority) {
                 debugLog.log('Setting priority from config:', config.priority);
                 // Handle both numeric and string priorities
@@ -447,33 +501,54 @@ export class IssueCreateModal extends Modal {
                 debugLog.log('Setting labels from config:', config.labels);
                 this.labels = [...config.labels];
             }
-            
+
+            const resolvedDefaults = resolveIssueModalDefaults({
+                expressions: inlineExpressions,
+                localConfig: {
+                    assignee: config.assignee,
+                    project: config.project
+                },
+                workspace: this.getSelectedWorkspaceConfig(),
+                users: this.users,
+                projects: this.projects
+            });
+
+            this.assigneeId = resolvedDefaults.assigneeId;
+            this.projectId = resolvedDefaults.projectId;
+
             // Apply inline expressions (they override config)
             for (const expr of inlineExpressions) {
                 switch (expr.type) {
-                    case 'team':
-                        const team = this.teams.find(t => 
-                            t.name.toLowerCase() === expr.value.toLowerCase() || 
+                    case 'team': {
+                        const team = this.teams.find(t =>
+                            t.name.toLowerCase() === expr.value.toLowerCase() ||
                             t.key.toLowerCase() === expr.value.toLowerCase()
                         );
                         if (team) {
                             debugLog.log('Setting team from inline expression:', team.name);
                             this.teamId = team.id;
-                            await this.loadStatesForTeam(team.id);
+                            await Promise.all([
+                                this.loadStatesForTeam(team.id),
+                                this.loadProjectsForTeam(team.id)
+                            ]);
+
+                            const expressionResolvedDefaults = resolveIssueModalDefaults({
+                                expressions: inlineExpressions,
+                                localConfig: {
+                                    assignee: config.assignee,
+                                    project: config.project
+                                },
+                                workspace: this.getSelectedWorkspaceConfig(),
+                                users: this.users,
+                                projects: this.projects
+                            });
+
+                            this.assigneeId = expressionResolvedDefaults.assigneeId;
+                            this.projectId = expressionResolvedDefaults.projectId;
                         }
                         break;
-                    case 'assignee':
-                        const user = this.users.find(u => 
-                            u.name.toLowerCase() === expr.value.toLowerCase() || 
-                            u.email.toLowerCase() === expr.value.toLowerCase()
-                        );
-                        if (user) {
-                            debugLog.log('Setting assignee from inline expression:', user.name);
-                            this.assigneeId = user.id;
-                        }
-                        break;
-                    case 'priority':
-                        // Convert priority label to number
+                    }
+                    case 'priority': {
                         const priorityNumber = this.convertPriorityLabelToNumber(expr.value);
                         if (priorityNumber >= 1 && priorityNumber <= 4) {
                             debugLog.log('=== SETTING PRIORITY FROM INLINE EXPRESSION ===');
@@ -486,10 +561,10 @@ export class IssueCreateModal extends Modal {
                             debugLog.warn('Invalid priority value:', expr.value);
                         }
                         break;
-                    // Handle status expressions
+                    }
                     case 'status':
                         if (this.states.length > 0) {
-                            const state = this.states.find(s => 
+                            const state = this.states.find(s =>
                                 s.name.toLowerCase() === expr.value.toLowerCase()
                             );
                             if (state) {
@@ -498,7 +573,6 @@ export class IssueCreateModal extends Modal {
                             }
                         }
                         break;
-                    // Handle label expressions
                     case 'label':
                         if (!this.labels.includes(expr.value)) {
                             debugLog.log('Adding label from inline expression:', expr.value);
@@ -514,8 +588,8 @@ export class IssueCreateModal extends Modal {
     }
 
     // Parse inline expressions 
-    private parseInlineExpressions(content: string): Array<{type: string, value: string}> {
-        const expressions: Array<{type: string, value: string}> = [];
+    private parseInlineExpressions(content: string): IssueModalExpression[] {
+        const expressions: IssueModalExpression[] = [];
         
         // IMPROVED regex patterns that handle spaces and special characters
         const patterns = [
@@ -523,7 +597,8 @@ export class IssueCreateModal extends Modal {
             { pattern: /@assignee\/([^@\r\n]+)/g, type: 'assignee' },            
             { pattern: /@priority\/([^@\r\n]+)/g, type: 'priority' },
             { pattern: /@status\/([^@\r\n]+)/g, type: 'status' }, // Add status
-            { pattern: /@label\/([^@\r\n]+)/g, type: 'label' } // Add label
+            { pattern: /@label\/([^@\r\n]+)/g, type: 'label' }, // Add label
+            { pattern: /@project\/([^@\r\n]+)/g, type: 'project' }
         ];
         
         patterns.forEach(({ pattern, type }) => {
@@ -571,30 +646,35 @@ export class IssueCreateModal extends Modal {
     }
 
     // Apply local config defaults
-    private applyLocalConfigDefaults(): void {
+    private async applyLocalConfigDefaults(): Promise<void> {
         // Only apply if not already set by expressions
         if (!this.teamId && this.localConfig?.team) {
-            const team = this.teams.find(t => 
-                t.name === this.localConfig.team || 
-                t.id === this.localConfig.team
-            );
+            const teamId = matchTeamId(this.teams, this.localConfig.team);
+            const team = this.teams.find(t => t.id === teamId);
             if (team) {
                 this.teamId = team.id;
-                this.loadStatesForTeam(team.id);
+                await Promise.all([
+                    this.loadStatesForTeam(team.id),
+                    this.loadProjectsForTeam(team.id)
+                ]);
+            }
+        }
+
+        if (!this.teamId) {
+            const defaultTeamId = matchTeamId(this.teams, this.getSelectedWorkspaceConfig()?.defaultTeamId);
+            const defaultTeam = this.teams.find(team => team.id === defaultTeamId);
+            if (defaultTeam) {
+                this.teamId = defaultTeam.id;
+                await Promise.all([
+                    this.loadStatesForTeam(defaultTeam.id),
+                    this.loadProjectsForTeam(defaultTeam.id)
+                ]);
             }
         }
         
-        if (!this.assigneeId && this.localConfig?.assignee) {
-            const user = this.users.find(u => 
-                u.name === this.localConfig.assignee || 
-                u.email === this.localConfig.assignee
-            );
-            if (user) {
-                this.assigneeId = user.id;
-            }
-        }
-        
-        if (this.priority === 0 && this.localConfig?.priority) {
+        this.applyResolvedDefaults();
+
+        if (this.priority === 3 && this.localConfig?.priority) {
             this.priority = this.localConfig.priority;
         }
 
@@ -621,27 +701,60 @@ export class IssueCreateModal extends Modal {
         }
 
         try {
-            const issue = await this.linearClient.createIssue(
-                this.title,
-                this.description,
-                this.teamId,
-                this.assigneeId || undefined,
-                this.stateId || undefined,
-                this.priority || undefined,
-                this.labels.length > 0 ? this.labels : undefined // Pass labels
-            );
+            const issue = await this.linearClient.createIssue({
+                title: this.title,
+                description: this.description,
+                teamId: this.teamId,
+                assigneeId: this.assigneeId || undefined,
+                stateId: this.stateId || undefined,
+                priority: this.priority || undefined,
+                labelNames: this.labels.length > 0 ? this.labels : undefined,
+                projectId: this.projectId || undefined
+            });
 
+            debugLog.log('Create issue response:', {
+                id: issue.id,
+                identifier: issue.identifier,
+                team: issue.team,
+                assignee: issue.assignee,
+                project: issue.project
+            });
             debugLog.log('Created issue with labels:', this.labels);
             await this.onSuccess(issue, this.selectedWorkspaceId);
             this.close();
         } catch (error) {
             new Notice(`Failed to create issue: ${(error as Error).message}`);
-            debugLog.error('Failed to create issue:', (error as Error).message);
+            debugLog.error('Failed to create issue:', error);
         }
     }
 
     onClose() {
         const { contentEl } = this;
         contentEl.empty();
+    }
+
+    private getSelectedWorkspaceConfig() {
+        return this.plugin.settings.workspaces.find((workspace: any) => workspace.id === this.selectedWorkspaceId) ?? null;
+    }
+
+    private applyResolvedDefaults(): void {
+        const resolvedDefaults = resolveIssueModalDefaults({
+            expressions: this.inlineExpressions,
+            localConfig: {
+                assignee: this.localConfig?.assignee,
+                project: this.localConfig?.project
+            },
+            workspace: this.getSelectedWorkspaceConfig(),
+            users: this.users,
+            projects: this.projects
+        });
+
+        if (!this.assigneeId) {
+            this.assigneeId = resolvedDefaults.assigneeId;
+        }
+
+        if (!this.projectId) {
+            this.projectId = resolvedDefaults.projectId;
+        }
     }
 }

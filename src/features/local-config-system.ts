@@ -384,13 +384,13 @@ export class BatchOperationManager {
             throw new Error('No team specified in note config');
         }
 
-        return await this.linearClient.createIssue(
+        return await this.linearClient.createIssue({
             title,
             description,
-            config.team,
-            config.assignee,
-            undefined // status
-        );
+            teamId: config.team,
+            assigneeId: config.assignee,
+            projectId: config.project
+        });
     }
 
 }

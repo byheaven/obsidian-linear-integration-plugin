@@ -43,6 +43,7 @@ const updateIssueByApiKey = new Map<string, jest.Mock<Promise<LinearIssue>, [str
 const addCommentByApiKey = new Map<string, jest.Mock<Promise<void>, [string, string]>>();
 const getTeamStatesByApiKey = new Map<string, jest.Mock<Promise<Array<{ id: string; name: string; type: string; color: string }>>, [string]>>();
 const getUsersByApiKey = new Map<string, jest.Mock<Promise<Array<{ id: string; name: string; email: string }>>, []>>();
+const getProjectsByApiKey = new Map<string, jest.Mock<Promise<Array<{ id: string; name: string; description?: string }>>, [string | undefined]>>();
 
 function createWorkspace(overrides: Partial<LinearWorkspace> = {}): LinearWorkspace {
     return {
@@ -76,6 +77,10 @@ function createIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
             id: 'team-1',
             name: 'Engineering',
             key: 'ENG'
+        },
+        project: {
+            id: 'project-1',
+            name: 'Alpha'
         },
         priority: 2,
         estimate: 3,
@@ -180,6 +185,10 @@ function registerClientMocks(apiKey: string, issue: LinearIssue): {
         { id: 'user-1', name: 'Jane Doe', email: 'jane@example.com' },
         { id: 'user-2', name: 'John Smith', email: 'john@example.com' }
     ]));
+    getProjectsByApiKey.set(apiKey, jest.fn().mockResolvedValue([
+        { id: 'project-1', name: 'Alpha' },
+        { id: 'project-2', name: 'Beta' }
+    ]));
 
     return { getIssuesMock, getIssueByIdMock, updateIssueMock, addCommentMock };
 }
@@ -193,6 +202,7 @@ describe('SyncManager frontmatter-first sync', () => {
         addCommentByApiKey.clear();
         getTeamStatesByApiKey.clear();
         getUsersByApiKey.clear();
+        getProjectsByApiKey.clear();
 
         jest.spyOn(LinearClient.prototype, 'getIssues').mockImplementation(function (
             this: { apiKey: string },
@@ -241,6 +251,15 @@ describe('SyncManager frontmatter-first sync', () => {
             if (!mock) throw new Error(`No getUsers mock configured for ${this.apiKey}`);
             return mock();
         });
+
+        jest.spyOn(LinearClient.prototype, 'getProjects').mockImplementation(function (
+            this: { apiKey: string },
+            teamId?: string
+        ) {
+            const mock = getProjectsByApiKey.get(this.apiKey);
+            if (!mock) throw new Error(`No getProjects mock configured for ${this.apiKey}`);
+            return mock(teamId);
+        });
     });
 
     afterEach(() => {
@@ -272,6 +291,7 @@ describe('SyncManager frontmatter-first sync', () => {
             linear_description: issue.description,
             linear_status_id: issue.state.id,
             linear_assignee_id: issue.assignee?.id,
+            linear_project_id: issue.project?.id,
             linear_team_id: issue.team.id
         }));
         expect(createdFile.content).toContain('## Linear Issue');
@@ -298,6 +318,8 @@ describe('SyncManager frontmatter-first sync', () => {
                     linear_status_id: remoteIssue.state.id,
                     linear_assignee: 'John Smith',
                     linear_assignee_id: remoteIssue.assignee?.id,
+                    linear_project: 'Beta',
+                    linear_project_id: '',
                     linear_team: remoteIssue.team.name,
                     linear_team_id: remoteIssue.team.id,
                     linear_priority: 1,
@@ -313,6 +335,7 @@ describe('SyncManager frontmatter-first sync', () => {
             description: 'Local description',
             state: { id: 'state-2', name: 'Done', type: 'completed' },
             assignee: { id: 'user-2', name: 'John Smith', email: 'john@example.com' },
+            project: { id: 'project-2', name: 'Beta' },
             priority: 1,
             labels: { nodes: [{ id: 'label-2', name: 'backend', color: '#0000ff' }, { id: 'label-1', name: 'bug', color: '#ff0000' }] }
         });
@@ -331,6 +354,7 @@ describe('SyncManager frontmatter-first sync', () => {
             description: 'Local description',
             stateId: 'state-2',
             assigneeId: 'user-2',
+            projectId: 'project-2',
             priority: 1,
             labelNames: ['bug', 'backend'],
             teamId: remoteIssue.team.id
@@ -342,6 +366,7 @@ describe('SyncManager frontmatter-first sync', () => {
             linear_description: 'Local description',
             linear_status: 'Done',
             linear_assignee: 'John Smith',
+            linear_project: 'Beta',
             linear_priority: 1
         }));
     });
@@ -491,5 +516,86 @@ describe('SyncManager frontmatter-first sync', () => {
         expect(updateIssueMock).not.toHaveBeenCalled();
         expect(result.updated).toBe(1);
         expect(file.content).toContain('Remote comment only');
+    });
+
+    it('clears the remote project when local project frontmatter is emptied', async () => {
+        const workspace = createWorkspace({ lastSyncTime: '2026-03-10T00:00:00.000Z' });
+        const remoteIssue = createIssue();
+        const app = createMockApp([
+            createFile(
+                'Linear/Workspace 1/ENG-1.md',
+                {
+                    linear_workspace_id: workspace.id,
+                    linear_id: remoteIssue.id,
+                    linear_identifier: remoteIssue.identifier,
+                    linear_title: remoteIssue.title,
+                    linear_description: remoteIssue.description,
+                    linear_status: remoteIssue.state.name,
+                    linear_project: '',
+                    linear_project_id: '',
+                    linear_team: remoteIssue.team.name,
+                    linear_team_id: remoteIssue.team.id,
+                    linear_last_synced: '2026-03-10T00:00:00.000Z'
+                },
+                '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+                Date.parse('2026-03-11T00:00:00.000Z')
+            )
+        ]);
+        const updatedIssue = createIssue({ project: undefined });
+        const plugin = { saveSettings: jest.fn(async () => undefined) };
+        const settings = createSettings([workspace]);
+        const { getIssuesMock, getIssueByIdMock, updateIssueMock } = registerClientMocks(workspace.apiKey, remoteIssue);
+        getIssuesMock.mockResolvedValue([]);
+        getIssueByIdMock.mockResolvedValue(remoteIssue);
+        updateIssueMock.mockResolvedValue(updatedIssue);
+
+        const manager = new SyncManager(app as never, settings, plugin);
+        await manager.syncAll();
+
+        expect(updateIssueMock).toHaveBeenCalledWith(remoteIssue.id, expect.objectContaining({
+            projectId: null
+        }));
+        const file = app.vault.getMarkdownFiles()[0];
+        expect(file.frontmatter).toEqual(expect.objectContaining({
+            linear_project: '',
+            linear_project_id: ''
+        }));
+    });
+
+    it('reports an unknown local project and skips the remote update', async () => {
+        const workspace = createWorkspace({ lastSyncTime: '2026-03-10T00:00:00.000Z' });
+        const remoteIssue = createIssue();
+        const file = createFile(
+            'Linear/Workspace 1/ENG-1.md',
+            {
+                linear_workspace_id: workspace.id,
+                linear_id: remoteIssue.id,
+                linear_identifier: remoteIssue.identifier,
+                linear_title: remoteIssue.title,
+                linear_description: remoteIssue.description,
+                linear_status: remoteIssue.state.name,
+                linear_project: 'Unknown Project',
+                linear_project_id: '',
+                linear_team: remoteIssue.team.name,
+                linear_team_id: remoteIssue.team.id,
+                linear_last_synced: '2026-03-10T00:00:00.000Z'
+            },
+            '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+            Date.parse('2026-03-11T00:00:00.000Z')
+        );
+        const app = createMockApp([file]);
+        const plugin = { saveSettings: jest.fn(async () => undefined) };
+        const settings = createSettings([workspace]);
+        const { getIssuesMock, getIssueByIdMock, updateIssueMock } = registerClientMocks(workspace.apiKey, remoteIssue);
+        getIssuesMock.mockResolvedValue([]);
+        getIssueByIdMock.mockResolvedValue(remoteIssue);
+
+        const manager = new SyncManager(app as never, settings, plugin);
+        const result = await manager.syncAll();
+
+        expect(updateIssueMock).not.toHaveBeenCalled();
+        expect(result.errors).toEqual(expect.arrayContaining([
+            expect.stringContaining('Unknown project')
+        ]));
     });
 });

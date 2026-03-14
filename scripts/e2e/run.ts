@@ -3,7 +3,8 @@ import path from 'node:path';
 import { cases as allCases } from './cases';
 import { ObsidianCli } from './lib/obsidian-cli';
 import { LinearApiClient } from './lib/linear-api';
-import { assertFilePathInsideVault } from './lib/note';
+import { assertFilePathInsideVault, findRunNotePaths } from './lib/note';
+import { selectDefaultAssigneeCandidate } from './lib/user-selection';
 import { CaseDefinition, CaseResult, E2EContext, E2EOptions, LinearState, PluginSettingsSnapshot, WorkspaceRuntime } from './types';
 
 const DEFAULT_PLUGIN_ID = 'linear-integration';
@@ -153,6 +154,7 @@ async function buildSharedState(settings: PluginSettingsSnapshot, runId: string)
 
     const selected = enabled.slice(0, 2);
     const runtimes: Record<string, WorkspaceRuntime> = {};
+    const originalWorkspaceDefaults: Record<string, { defaultAssigneeId?: string; defaultProjectId?: string }> = {};
 
     for (const workspace of selected) {
         const client = new LinearApiClient(workspace.apiKey);
@@ -160,7 +162,9 @@ async function buildSharedState(settings: PluginSettingsSnapshot, runId: string)
         const team = resolveWorkspaceTeam(workspace.teamIds, teams);
         const states = await client.getTeamStates(team.id);
         const state = resolveOpenState(states);
-        const users = await client.getUsers();
+        const teamMembers = await client.getTeamMembers(team.id);
+        const projects = await client.getProjects(team.id);
+        const user = selectDefaultAssigneeCandidate(teamMembers);
         const tempNotePath = path.posix.join(
             'E2E',
             'linear-integration',
@@ -169,19 +173,26 @@ async function buildSharedState(settings: PluginSettingsSnapshot, runId: string)
         );
 
         assertFilePathInsideVault(tempNotePath);
+        originalWorkspaceDefaults[workspace.id] = {
+            defaultAssigneeId: workspace.defaultAssigneeId,
+            defaultProjectId: workspace.defaultProjectId
+        };
 
         runtimes[workspace.id] = {
             config: workspace,
             client,
             team,
             state,
-            user: users[0],
+            user,
+            project: projects[0],
+            alternateProject: projects[1] ?? projects[0],
             tempNotePath
         };
     }
 
     return {
         originalDefaultWorkspaceId: settings.defaultWorkspaceId,
+        originalWorkspaceDefaults,
         workspacesById: runtimes,
         localNotes: [],
         remoteIssues: []
@@ -244,33 +255,35 @@ async function preflight(context: E2EContext): Promise<void> {
 }
 
 async function cleanup(context: E2EContext): Promise<void> {
-    const trackedIssueIds = Array.from(new Set(context.shared.remoteIssues.map(remote => remote.issueId)));
+    const trackedIssueIds = new Set(context.shared.remoteIssues.map(remote => remote.issueId));
     const notePaths = new Set(context.shared.localNotes);
+    const searchRoots = new Set<string>([path.posix.join('E2E', 'linear-integration', context.runId)]);
 
-    if (trackedIssueIds.length > 0) {
+    for (const workspace of Object.values(context.shared.workspacesById)) {
+        searchRoots.add(workspace.config.syncFolder);
         try {
-            const trackedNotes = await context.obsidian.evalJson<string[]>(
-                `
-                    (() => {
-                        const issueIds = new Set(${JSON.stringify(trackedIssueIds)});
-                        const files = app.vault.getMarkdownFiles();
-                        const matched = files
-                            .filter((file) => {
-                                const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
-                                return frontmatter?.linear_id && issueIds.has(String(frontmatter.linear_id));
-                            })
-                            .map((file) => file.path);
-                        return JSON.stringify(matched);
-                    })()
-                `
-            );
-
-            for (const notePath of trackedNotes) {
-                notePaths.add(notePath);
+            const discoveredIssues = await workspace.client.searchIssues(context.runId);
+            for (const issue of discoveredIssues) {
+                trackedIssueIds.add(issue.id);
             }
         } catch (error) {
-            context.log(`Failed to resolve tracked notes for cleanup: ${String(error)}`);
+            context.log(`Failed to sweep remote issues for ${workspace.config.name}: ${String(error)}`);
         }
+    }
+
+    try {
+        const discoveredNotes = await findRunNotePaths(
+            context.options.vaultPath,
+            context.runId,
+            Array.from(trackedIssueIds),
+            Array.from(searchRoots)
+        );
+
+        for (const notePath of discoveredNotes) {
+            notePaths.add(notePath);
+        }
+    } catch (error) {
+        context.log(`Failed to sweep local notes for cleanup: ${String(error)}`);
     }
 
     for (const remote of context.shared.remoteIssues) {
@@ -279,6 +292,20 @@ async function cleanup(context: E2EContext): Promise<void> {
             await workspace.client.deleteIssue(remote.issueId);
         } catch (error) {
             context.log(`Remote cleanup failed for ${remote.issueId}: ${String(error)}`);
+        }
+    }
+
+    const untrackedIssueIds = Array.from(trackedIssueIds).filter(
+        issueId => !context.shared.remoteIssues.some(remote => remote.issueId === issueId)
+    );
+    for (const issueId of untrackedIssueIds) {
+        for (const workspace of Object.values(context.shared.workspacesById)) {
+            try {
+                await workspace.client.deleteIssue(issueId);
+                break;
+            } catch {
+                continue;
+            }
         }
     }
 
@@ -296,11 +323,20 @@ async function cleanup(context: E2EContext): Promise<void> {
     try {
         await context.obsidian.eval(
             `
-                const plugin = app.plugins.plugins["${context.options.pluginId}"];
-                if (plugin) {
-                    plugin.settings.defaultWorkspaceId = ${JSON.stringify(context.shared.originalDefaultWorkspaceId)};
-                }
-                JSON.stringify({ restored: true });
+                (async () => {
+                    const plugin = app.plugins.plugins["${context.options.pluginId}"];
+                    if (plugin) {
+                        plugin.settings.defaultWorkspaceId = ${JSON.stringify(context.shared.originalDefaultWorkspaceId)};
+                        const workspaceDefaults = ${JSON.stringify(context.shared.originalWorkspaceDefaults)};
+                        plugin.settings.workspaces.forEach((workspace) => {
+                            const defaults = workspaceDefaults[workspace.id] ?? {};
+                            workspace.defaultAssigneeId = defaults.defaultAssigneeId;
+                            workspace.defaultProjectId = defaults.defaultProjectId;
+                        });
+                        await plugin.saveSettings();
+                    }
+                    return JSON.stringify({ restored: true });
+                })()
             `
         );
     } catch (error) {

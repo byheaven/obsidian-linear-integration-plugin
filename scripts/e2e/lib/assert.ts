@@ -24,6 +24,10 @@ export function assertIssueMirrored(frontmatter: NoteFrontmatter, issue: LinearI
     assert(frontmatter.linear_description === (issue.description ?? ''), 'Expected linear_description to match Linear issue');
     assert(frontmatter.linear_status === issue.state.name, `Expected linear_status ${issue.state.name}`);
     assert(frontmatter.linear_status_id === issue.state.id, `Expected linear_status_id ${issue.state.id}`);
+    assert(frontmatter.linear_assignee === (issue.assignee?.name ?? ''), 'Expected linear_assignee to match Linear issue');
+    assert(frontmatter.linear_assignee_id === (issue.assignee?.id ?? ''), 'Expected linear_assignee_id to match Linear issue');
+    assert(frontmatter.linear_project === (issue.project?.name ?? ''), 'Expected linear_project to match Linear issue');
+    assert(frontmatter.linear_project_id === (issue.project?.id ?? ''), 'Expected linear_project_id to match Linear issue');
     assert(frontmatter.linear_priority === issue.priority, `Expected linear_priority ${issue.priority}`);
 }
 

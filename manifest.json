@@ -1,10 +1,10 @@
 {
-    "id": "linear-integration",
-    "name": "Linear Integration",
-    "version": "1.1.0",
-    "minAppVersion": "0.15.0",
-    "description": "Sync Linear (https://linear.app) issues with notes. Create, update, and track Linear issues directly from your vault.",
-    "author": "byheaven",
-    "authorUrl": "https://github.com/byheaven",
-    "isDesktopOnly": false
+	"id": "linear-integration",
+	"name": "Linear Integration",
+	"version": "1.2.0",
+	"minAppVersion": "0.15.0",
+	"description": "Sync Linear (https://linear.app) issues with notes. Create, update, and track Linear issues directly from your vault.",
+	"author": "byheaven",
+	"authorUrl": "https://github.com/byheaven",
+	"isDesktopOnly": false
 }

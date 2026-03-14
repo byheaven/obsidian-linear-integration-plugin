@@ -6,7 +6,12 @@ export interface LinearWorkspace {
     apiKey: string;
     syncFolder: string;   // vault path for this workspace's notes
     teamIds: string[];    // empty = sync all teams; non-empty = one call per teamId
-    cachedTeams?: { id: string; name: string }[];  // persisted after Test Connection
+    cachedTeams?: { id: string; name: string; key?: string }[];  // persisted after Test Connection
+    cachedUsers?: { id: string; name: string; email: string }[];
+    cachedProjects?: { id: string; name: string; description?: string; teamIds?: string[] }[];
+    defaultTeamId?: string;
+    defaultAssigneeId?: string;
+    defaultProjectId?: string;
     lastSyncTime?: string;
     enabled: boolean;
 }
@@ -78,6 +83,10 @@ export interface LinearIssue {
         name: string;
         key: string;
     };
+    project?: {
+        id: string;
+        name: string;
+    };
     priority: number;
     estimate?: number;
     dueDate?: string;
@@ -95,9 +104,9 @@ export interface LinearIssue {
         nodes: Array<{
             id: string;
             body: string;
-            user: {
+            user?: {
                 name: string;
-            };
+            } | null;
             createdAt: string;
         }>;
     };
@@ -122,6 +131,13 @@ export interface LinearUser {
     email: string;
 }
 
+export interface LinearProject {
+    id: string;
+    name: string;
+    description?: string;
+    teamIds?: string[];
+}
+
 export interface NoteFrontmatter {
     linear_workspace_id?: string;
     linear_id?: string;
@@ -132,6 +148,8 @@ export interface NoteFrontmatter {
     linear_status_id?: string;
     linear_assignee?: string;
     linear_assignee_id?: string;
+    linear_project?: string;
+    linear_project_id?: string;
     linear_team?: string;
     linear_team_id?: string;
     linear_url?: string;

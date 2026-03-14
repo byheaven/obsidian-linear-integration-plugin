@@ -1,4 +1,4 @@
-import { LinearClientLike, LinearIssue, LinearState, LinearTeam, LinearUser } from '../types';
+import { LinearClientLike, LinearIssue, LinearProject, LinearState, LinearTeam, LinearUser } from '../types';
 
 export class LinearApiClient implements LinearClientLike {
     private readonly baseUrl = 'https://api.linear.app/graphql';
@@ -35,6 +35,56 @@ export class LinearApiClient implements LinearClientLike {
         return data.users.nodes;
     }
 
+    async getTeamMembers(teamId: string): Promise<LinearUser[]> {
+        const data = await this.request<{ team: { members: { nodes: LinearUser[] } } }>(
+            `
+                query($teamId: String!) {
+                    team(id: $teamId) {
+                        members {
+                            nodes {
+                                id
+                                name
+                                email
+                            }
+                        }
+                    }
+                }
+            `,
+            { teamId }
+        );
+
+        return data.team.members.nodes;
+    }
+
+    async getProjects(teamId?: string): Promise<LinearProject[]> {
+        const data = await this.request<{ projects: { nodes: LinearProject[] } }>(
+            `
+                query {
+                    projects {
+                        nodes {
+                            id
+                            name
+                            description
+                            teams {
+                                nodes {
+                                    id
+                                }
+                            }
+                        }
+                    }
+                }
+            `
+        );
+        const projects = data.projects.nodes as Array<LinearProject & { teams?: { nodes?: Array<{ id: string }> } }>;
+        if (!teamId) {
+            return projects;
+        }
+
+        return projects.filter(project =>
+            project.teams?.nodes?.some(team => team.id === teamId)
+        );
+    }
+
     async getTeamStates(teamId: string): Promise<LinearState[]> {
         const data = await this.request<{ team: { states: { nodes: LinearState[] } } }>(
             `
@@ -69,6 +119,23 @@ export class LinearApiClient implements LinearClientLike {
         return data.issue;
     }
 
+    async searchIssues(query: string): Promise<LinearIssue[]> {
+        const data = await this.request<{ issues: { nodes: LinearIssue[] } }>(
+            `
+                query($query: String!) {
+                    issues(filter: { title: { containsIgnoreCase: $query } }) {
+                        nodes {
+                            ${ISSUE_FIELDS}
+                        }
+                    }
+                }
+            `,
+            { query }
+        );
+
+        return data.issues.nodes;
+    }
+
     async createIssue(input: {
         title: string;
         description: string;
@@ -77,6 +144,7 @@ export class LinearApiClient implements LinearClientLike {
         stateId?: string;
         priority?: number;
         labelNames?: string[];
+        projectId?: string;
     }): Promise<LinearIssue> {
         const mutationInput: Record<string, unknown> = {
             title: input.title,
@@ -87,6 +155,7 @@ export class LinearApiClient implements LinearClientLike {
         if (input.assigneeId) mutationInput.assigneeId = input.assigneeId;
         if (input.stateId) mutationInput.stateId = input.stateId;
         if (input.priority !== undefined) mutationInput.priority = input.priority;
+        if (input.projectId) mutationInput.projectId = input.projectId;
         if (input.labelNames?.length) {
             mutationInput.labelIds = await this.resolveLabelIds(input.labelNames, input.teamId);
         }
@@ -119,6 +188,7 @@ export class LinearApiClient implements LinearClientLike {
             description: string;
             stateId: string;
             assigneeId: string | null;
+            projectId: string | null;
             priority: number;
             labelNames: string[];
             teamId: string;
@@ -129,6 +199,7 @@ export class LinearApiClient implements LinearClientLike {
         if (updates.description !== undefined) input.description = updates.description;
         if (updates.stateId !== undefined) input.stateId = updates.stateId;
         if (updates.assigneeId !== undefined) input.assigneeId = updates.assigneeId;
+        if (updates.projectId !== undefined) input.projectId = updates.projectId;
         if (updates.priority !== undefined) input.priority = updates.priority;
         if (updates.labelNames !== undefined) {
             if (!updates.teamId) {
@@ -305,6 +376,10 @@ const ISSUE_FIELDS = `
         id
         name
         key
+    }
+    project {
+        id
+        name
     }
     priority
     labels {

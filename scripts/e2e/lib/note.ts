@@ -38,3 +38,57 @@ export function buildManagedBodyExpectations(body: string): boolean {
         && body.includes('## Comments')
         && body.includes('--- Synced to Linear at ');
 }
+
+export async function findRunNotePaths(
+    vaultPath: string,
+    runId: string,
+    issueIds: string[],
+    searchRoots: string[]
+): Promise<string[]> {
+    const matches = new Set<string>();
+    const normalizedRoots = Array.from(new Set(searchRoots.filter(Boolean)));
+
+    for (const root of normalizedRoots) {
+        assertFilePathInsideVault(root);
+        const absoluteRoot = path.join(vaultPath, root);
+        for (const absolutePath of await collectMarkdownFiles(absoluteRoot)) {
+            const raw = await fs.readFile(absolutePath, 'utf8');
+            const parsed = parseNote(raw);
+            const vaultRelativePath = path.relative(vaultPath, absolutePath).split(path.sep).join(path.posix.sep);
+            const linearId = typeof parsed.frontmatter.linear_id === 'string' ? parsed.frontmatter.linear_id : '';
+
+            if (vaultRelativePath.includes(runId) || raw.includes(runId) || (linearId && issueIds.includes(linearId))) {
+                matches.add(vaultRelativePath);
+            }
+        }
+    }
+
+    return Array.from(matches);
+}
+
+async function collectMarkdownFiles(rootPath: string): Promise<string[]> {
+    try {
+        const stats = await fs.stat(rootPath);
+        if (!stats.isDirectory()) {
+            return rootPath.endsWith('.md') ? [rootPath] : [];
+        }
+    } catch {
+        return [];
+    }
+
+    const results: string[] = [];
+    const entries = await fs.readdir(rootPath, { withFileTypes: true });
+    for (const entry of entries) {
+        const absolutePath = path.join(rootPath, entry.name);
+        if (entry.isDirectory()) {
+            results.push(...await collectMarkdownFiles(absolutePath));
+            continue;
+        }
+
+        if (entry.isFile() && entry.name.endsWith('.md')) {
+            results.push(absolutePath);
+        }
+    }
+
+    return results;
+}

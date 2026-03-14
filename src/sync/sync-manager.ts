@@ -59,6 +59,9 @@ export class SyncManager {
         const frontmatter = await this.getFrontmatter(file);
         const isNewNote = !frontmatter.linear_id && !frontmatter.linear_identifier;
         const syncTimestamp = this.createBufferedSyncTimestamp();
+        const currentContent = await this.app.vault.read(file);
+        const nextManagedState = managedState ?? parseManagedNoteState(currentContent);
+        const nextBody = renderManagedNoteBody(issue, nextManagedState, this.settings.includeComments);
 
         const updatedFrontmatter: NoteFrontmatter = {
             ...frontmatter,
@@ -71,6 +74,8 @@ export class SyncManager {
             linear_status_id: issue.state.id,
             linear_assignee: issue.assignee?.name || '',
             linear_assignee_id: issue.assignee?.id || '',
+            linear_project: issue.project?.name || '',
+            linear_project_id: issue.project?.id || '',
             linear_team: issue.team.name,
             linear_team_id: issue.team.id,
             linear_url: issue.url,
@@ -82,15 +87,8 @@ export class SyncManager {
             linear_labels: issue.labels.nodes.map(label => label.name)
         };
 
-        await updateFrontmatter(this.app, file, updatedFrontmatter);
-
-        const currentContent = await this.app.vault.read(file);
-        const nextManagedState = managedState ?? parseManagedNoteState(currentContent);
-        const nextBody = renderManagedNoteBody(issue, nextManagedState, this.settings.includeComments);
         await replaceNoteBody(this.app, file, nextBody);
-        await updateFrontmatter(this.app, file, {
-            linear_last_synced: this.createBufferedSyncTimestamp()
-        });
+        await updateFrontmatter(this.app, file, updatedFrontmatter);
 
         return isNewNote;
     }
@@ -251,6 +249,7 @@ export class SyncManager {
         description: string;
         stateId: string;
         assigneeId: string | null;
+        projectId: string | null;
         priority: number;
         labelNames: string[];
         teamId: string;
@@ -260,6 +259,7 @@ export class SyncManager {
             description: string;
             stateId: string;
             assigneeId: string | null;
+            projectId: string | null;
             priority: number;
             labelNames: string[];
             teamId: string;
@@ -304,6 +304,37 @@ export class SyncManager {
                     throw new Error(`Unknown assignee for ${issue.identifier}: ${localAssignee}`);
                 }
                 updates.assigneeId = matchedUser.id;
+            }
+        }
+
+        const localProjectName = this.normalizeString(frontmatter.linear_project);
+        const localProjectId = this.normalizeString(frontmatter.linear_project_id);
+        const remoteProjectName = issue.project?.name || '';
+        const remoteProjectId = issue.project?.id || '';
+        if (
+            frontmatter.linear_project !== undefined ||
+            frontmatter.linear_project_id !== undefined
+        ) {
+            const localProjectMatchesRemote =
+                localProjectName === remoteProjectName &&
+                localProjectId === remoteProjectId;
+
+            if (!localProjectMatchesRemote) {
+                if (!localProjectName && !localProjectId) {
+                    updates.projectId = null;
+                } else {
+                    const projects = await client.getProjects(issue.team.id);
+                    const matchedProject = projects.find(project =>
+                        (localProjectId && project.id === localProjectId) ||
+                        project.name.toLowerCase() === localProjectName.toLowerCase()
+                    );
+
+                    if (!matchedProject) {
+                        throw new Error(`Unknown project for ${issue.identifier}: ${localProjectName || localProjectId}`);
+                    }
+
+                    updates.projectId = matchedProject.id;
+                }
             }
         }
 

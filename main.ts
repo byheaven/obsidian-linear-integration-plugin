@@ -311,10 +311,15 @@ export default class LinearPlugin extends Plugin {
                     throw new Error('No workspace configured.');
                 }
 
-                await this.syncManager.updateNoteWithIssue(file, issue, workspace, {
-                    draftText: '',
-                    syncLabel: new Date().toLocaleString()
-                });
+                try {
+                    await this.syncManager.updateNoteWithIssue(file, issue, workspace, {
+                        draftText: '',
+                        syncLabel: new Date().toLocaleString()
+                    });
+                } catch (error) {
+                    debugLog.error('Failed to update note after creating a Linear issue:', error);
+                    throw error;
+                }
                 new Notice(`Created Linear issue: ${issue.identifier} - ${issue.title}`);
             }
         );
