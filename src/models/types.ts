@@ -17,10 +17,8 @@ export interface LinearPluginSettings {
     defaultWorkspaceId: string | null;
     autoSync: boolean;
     autoSyncInterval: number;
-    includeDescription: boolean;
     includeComments: boolean;
     statusMapping: Record<string, string>;
-    noteTemplate: string;
     secureTokenStorage: boolean;
     inlineCommentMirroring: boolean;
     kanbanGeneration: boolean;
@@ -36,11 +34,10 @@ export interface LinearPluginSettings {
 
 export const DEFAULT_SETTINGS: LinearPluginSettings = {
     workspaces: [],
-    settingsVersion: 1,
+    settingsVersion: 2,
     defaultWorkspaceId: null,
     autoSync: false,
     autoSyncInterval: 15,
-    includeDescription: true,
     includeComments: false,
     statusMapping: {
         'Todo': '📋',
@@ -48,22 +45,6 @@ export const DEFAULT_SETTINGS: LinearPluginSettings = {
         'Done': '✅',
         'Canceled': '❌'
     },
-    noteTemplate: `# {{title}}
-
-**Status:** {{status}}
-**Assignee:** {{assignee}}
-**Team:** {{team}}
-**Created:** {{created}}
-**Updated:** {{updated}}
-
-## Description
-{{description}}
-
-## Linear Link
-[Open in Linear]({{url}})
-
----
-*Last synced: {{lastSync}}*`,
     secureTokenStorage: true,
     inlineCommentMirroring: true,
     kanbanGeneration: false,
@@ -145,9 +126,14 @@ export interface NoteFrontmatter {
     linear_workspace_id?: string;
     linear_id?: string;
     linear_identifier?: string;
+    linear_title?: string;
+    linear_description?: string;
     linear_status?: string;
+    linear_status_id?: string;
     linear_assignee?: string;
+    linear_assignee_id?: string;
     linear_team?: string;
+    linear_team_id?: string;
     linear_url?: string;
     linear_created?: string;
     linear_updated?: string;
@@ -184,7 +170,7 @@ export interface LinearNoteConfig {
 }
 
 export interface InlineTag {
-    type: 'status' | 'assignee' | 'priority' | 'label' | 'project';
+    type: 'team' | 'status' | 'assignee' | 'priority' | 'label' | 'project';
     value: string;
     position: { start: number; end: number };
 }

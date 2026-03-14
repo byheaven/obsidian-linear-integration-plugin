@@ -309,6 +309,17 @@ src/
 
 ## 🤝 Contributing
 
+## E2E Development
+
+Large sync-related changes should be validated against a real Obsidian vault with the local E2E suite:
+
+```bash
+npm run e2e:list
+npm run e2e:smoke
+```
+
+The full workflow, maintenance rules, and case inventory live in `tests/e2e/README.md`.
+
 ### Ways to Contribute
 
 - 🐛 **Bug Reports**: Found an issue? Let us know!

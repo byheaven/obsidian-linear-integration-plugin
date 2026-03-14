@@ -115,6 +115,16 @@ export class LinearClient {
                         createdAt
                         updatedAt
                         url
+                        comments {
+                            nodes {
+                                id
+                                body
+                                user {
+                                    name
+                                }
+                                createdAt
+                            }
+                        }
                     }
                 }
             }
@@ -331,7 +341,29 @@ export class LinearClient {
         return colors[Math.floor(Math.random() * colors.length)];
     }
 
-    async updateIssue(id: string, updates: Partial<{ title: string; description: string; stateId: string; assigneeId: string }>): Promise<LinearIssue> {
+    async updateIssue(
+        id: string,
+        updates: Partial<{
+            title: string;
+            description: string;
+            stateId: string;
+            assigneeId: string | null;
+            priority: number;
+            labelNames: string[];
+            teamId: string;
+        }>
+    ): Promise<LinearIssue> {
+        const input: Record<string, unknown> = {};
+        if (updates.title !== undefined) input.title = updates.title;
+        if (updates.description !== undefined) input.description = updates.description;
+        if (updates.stateId !== undefined) input.stateId = updates.stateId;
+        if (updates.assigneeId !== undefined) input.assigneeId = updates.assigneeId;
+        if (updates.priority !== undefined) input.priority = updates.priority;
+        if (updates.labelNames !== undefined) {
+            const labelIds = await this.convertLabelNamesToIds(updates.labelNames, updates.teamId);
+            input.labelIds = labelIds;
+        }
+
         const query = `
             mutation($id: String!, $input: IssueUpdateInput!) {
                 issueUpdate(id: $id, input: $input) {
@@ -368,12 +400,22 @@ export class LinearClient {
                         createdAt
                         updatedAt
                         url
+                        comments {
+                            nodes {
+                                id
+                                body
+                                user {
+                                    name
+                                }
+                                createdAt
+                            }
+                        }
                     }
                 }
             }
         `;
 
-        const data = await this.makeRequest(query, { id, input: updates });
+        const data = await this.makeRequest(query, { id, input });
         
         if (!data.issueUpdate.success) {
             throw new Error('Failed to update Linear issue');

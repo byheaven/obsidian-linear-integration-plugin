@@ -4,11 +4,12 @@ import { parseFrontmatter } from '../utils/frontmatter';
 
 export class MarkdownParser {
     private static readonly TAG_PATTERNS = {
-        status: /@status\/([^\s]+)/g,
-        assignee: /@assignee\/([^\s]+)/g,
+        team: /@team\/([^@\r\n]+)/g,
+        status: /@status\/([^@\r\n]+)/g,
+        assignee: /@assignee\/([^@\r\n]+)/g,
         priority: /@priority\/(\d+)/g,
-        label: /#([^\s#]+)/g,
-        project: /@project\/([^\s]+)/g
+        label: /@label\/([^@\r\n]+)/g,
+        project: /@project\/([^@\r\n]+)/g
     };
 
     static parseInlineTags(content: string): InlineTag[] {
@@ -58,11 +59,16 @@ export class MarkdownParser {
                 case 'assignee':
                     config.assignee = tag.value;
                     break;
+                case 'team':
+                    config.team = tag.value;
+                    break;
                 case 'priority':
                     config.priority = parseInt(tag.value);
                     break;
                 case 'project':
                     config.project = tag.value;
+                    break;
+                case 'status':
                     break;
                 case 'label':
                     if (!config.labels) config.labels = [];
@@ -79,6 +85,9 @@ export class MarkdownParser {
     static convertToLinearDescription(content: string): string {
         // Remove frontmatter
         let description = content.replace(/^---\n[\s\S]*?\n---\n?/, '');
+
+        // Remove the first heading because title is stored separately.
+        description = description.replace(/^#\s+.+\n/, '');
         
         // Remove inline tags for cleaner Linear description
         Object.values(this.TAG_PATTERNS).forEach(pattern => {

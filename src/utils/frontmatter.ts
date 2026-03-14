@@ -36,3 +36,22 @@ export async function updateFrontmatter(app: App, file: TFile, newFrontmatter: N
         });
     });
 }
+
+export function splitFrontmatter(content: string): { frontmatterBlock: string; body: string } {
+    const frontmatterMatch = content.match(/^(---\n[\s\S]*?\n---\n?)/);
+    if (!frontmatterMatch) {
+        return { frontmatterBlock: '', body: content };
+    }
+
+    return {
+        frontmatterBlock: frontmatterMatch[1],
+        body: content.slice(frontmatterMatch[1].length)
+    };
+}
+
+export async function replaceNoteBody(app: App, file: TFile, newBody: string): Promise<void> {
+    const content = await app.vault.read(file);
+    const { frontmatterBlock } = splitFrontmatter(content);
+    const normalizedBody = newBody.endsWith('\n') ? newBody : `${newBody}\n`;
+    await app.vault.modify(file, `${frontmatterBlock}${normalizedBody}`);
+}

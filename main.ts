@@ -311,11 +311,10 @@ export default class LinearPlugin extends Plugin {
                     throw new Error('No workspace configured.');
                 }
 
-                await this.syncManager.updateNoteWithIssue(file, issue, workspace);
-                const content = await this.app.vault.read(file);
-                const reference = MarkdownParser.generateIssueReference(issue.id, issue.identifier);
-                const updatedContent = MarkdownParser.embedIssueReference(content, reference, 'bottom');
-                await this.app.vault.modify(file, updatedContent);
+                await this.syncManager.updateNoteWithIssue(file, issue, workspace, {
+                    draftText: '',
+                    syncLabel: new Date().toLocaleString()
+                });
                 new Notice(`Created Linear issue: ${issue.identifier} - ${issue.title}`);
             }
         );
@@ -535,7 +534,7 @@ export default class LinearPlugin extends Plugin {
 
     async loadSettings() {
         const stored = await this.loadData();
-        if (!stored || stored.settingsVersion !== 1) {
+        if (!stored || stored.settingsVersion !== 2) {
             if (stored) {
                 // Preserve backup so the user can recover manually
                 await this.saveData({ _backup: stored, ...DEFAULT_SETTINGS });

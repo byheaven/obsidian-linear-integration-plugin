@@ -377,11 +377,7 @@ export class IssueCreateModal extends Modal {
                 this.title = firstHeading[1];
             }
 
-            // Extract description from content
-            let description = content;
-            description = description.replace(/^---\n[\s\S]*?\n---\n/, '');
-            description = description.replace(/^#\s+.+\n/, '');
-            this.description = description.trim().substring(0, 2000);
+            this.description = MarkdownParser.convertToLinearDescription(content).substring(0, 2000);
             
             // Auto-fill based on expressions if enabled
             if (this.settings.autoFillFromExpressions) {
@@ -523,11 +519,11 @@ export class IssueCreateModal extends Modal {
         
         // IMPROVED regex patterns that handle spaces and special characters
         const patterns = [
-            { pattern: /@team\/([^@\s]+(?:\s+[^@\s]+)*)/g, type: 'team' },
-            { pattern: /@assignee\/([^@\s]+(?:\s+[^@\s]+)*)/g, type: 'assignee' },            
-            { pattern: /@priority\/([^@\s]+(?:\s+[^@\s]+)*)/g, type: 'priority' },
-            { pattern: /@status\/([^@\s]+(?:\s+[^@\s]+)*)/g, type: 'status' }, // Add status
-            { pattern: /@label\/([^@\s]+(?:\s+[^@\s]+)*)/g, type: 'label' } // Add label
+            { pattern: /@team\/([^@\r\n]+)/g, type: 'team' },
+            { pattern: /@assignee\/([^@\r\n]+)/g, type: 'assignee' },            
+            { pattern: /@priority\/([^@\r\n]+)/g, type: 'priority' },
+            { pattern: /@status\/([^@\r\n]+)/g, type: 'status' }, // Add status
+            { pattern: /@label\/([^@\r\n]+)/g, type: 'label' } // Add label
         ];
         
         patterns.forEach(({ pattern, type }) => {

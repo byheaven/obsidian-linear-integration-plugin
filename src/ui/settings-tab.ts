@@ -385,17 +385,6 @@ export class LinearSettingsTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        // Include description toggle
-        new Setting(containerEl)
-            .setName('Include description')
-            .setDesc('Include Linear issue descriptions in notes')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.includeDescription)
-                .onChange(async (value) => {
-                    this.plugin.settings.includeDescription = value;
-                    await this.plugin.saveSettings();
-                }));
-
         // Include comments toggle
         new Setting(containerEl)
             .setName('Include comments')
@@ -417,22 +406,6 @@ export class LinearSettingsTab extends PluginSettingTab {
                     this.plugin.settings.autoFillFromExpressions = value;
                     await this.plugin.saveSettings();
                 }));
-
-        new Setting(containerEl).setName('Note template').setHeading();
-
-        // Note template setting
-        new Setting(containerEl)
-            .setName('Note template')
-            .setDesc('Template for generated notes. Available variables: {{title}}, {{status}}, {{assignee}}, {{team}}, {{created}}, {{updated}}, {{description}}, {{url}}, {{lastSync}}')
-            .addTextArea(text => {
-                text.setValue(this.plugin.settings.noteTemplate);
-                text.inputEl.rows = 10;
-                text.inputEl.cols = 50;
-                text.onChange(async (value) => {
-                    this.plugin.settings.noteTemplate = value;
-                    await this.plugin.saveSettings();
-                });
-            });
 
         new Setting(containerEl)
             .setName('Status mapping')
