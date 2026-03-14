@@ -23,6 +23,9 @@ git push origin master && git push origin x.y.z
 # GitHub Actions auto-builds and publishes release assets
 ```
 
+- Every version release must include GitHub release notes.
+- Every version release with user-visible behavior changes must update `README.md`.
+
 ## Architecture Notes
 - `src/sync/sync-manager.ts` — core sync logic. `findOrCreateNoteForIssue()` uses a vault-wide index
   (built once per sync) to match notes by `linear_workspace_id` + `linear_id` / `linear_identifier`.
