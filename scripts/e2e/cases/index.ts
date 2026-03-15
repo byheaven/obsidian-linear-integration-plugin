@@ -110,7 +110,7 @@ export const cases: CaseDefinition[] = [
                 const note = await readNoteFromDisk(context.options.vaultPath, workspace.tempNotePath);
                 const draft = `Local draft comment ${context.runId} ${workspace.config.name}`;
                 const nextBody = note.body.replace(
-                    /(^## New Comment\s*\n+--- Synced to Linear at .*? ---\n+)/m,
+                    /(^#{1,2} New Comment\s*\n+--- Synced to Linear at .*? ---\n+)/m,
                     `$1${draft}\n\n`
                 );
 
@@ -150,7 +150,7 @@ export const cases: CaseDefinition[] = [
             for (const workspace of Object.values(context.shared.workspacesById)) {
                 const note = await readNoteFromDisk(context.options.vaultPath, workspace.tempNotePath);
                 assertCommentMirrored(note, `Remote comment ${context.runId} ${workspace.config.name}`);
-                assert(/## New Comment[\s\S]*?## Comments/m.test(note.body), 'Managed comment sections are malformed');
+                assert(/#{1,2} New Comment[\s\S]*?#{1,2} Comments/m.test(note.body), 'Managed comment sections are malformed');
             }
         }
     },
@@ -232,6 +232,30 @@ export const cases: CaseDefinition[] = [
             }
 
             assert(after.length >= before.length, 'Linked note count unexpectedly decreased after sanity sync');
+        }
+    },
+    {
+        id: 'WS-010',
+        name: 'Repair missing managed sections',
+        summary: 'Linked issue notes missing Document or New Comment sections should be normalized on the next sync.',
+        smoke: false,
+        run: async (context) => {
+            const workspaces = Object.values(context.shared.workspacesById);
+            for (const [index, workspace] of workspaces.entries()) {
+                const note = await readNoteFromDisk(context.options.vaultPath, workspace.tempNotePath);
+                const nextBody = index % 2 === 0
+                    ? note.body.replace(/#{1,2} Document\s*[\s\S]*?#{1,2} New Comment/m, '# New Comment')
+                    : note.body.replace(/#{1,2} New Comment\s*[\s\S]*?#{1,2} Comments/m, '# Comments');
+
+                await writeManagedBody(context, workspace.tempNotePath, note.raw, nextBody);
+            }
+
+            await syncAndCapture(context, 'ws-010');
+
+            for (const workspace of workspaces) {
+                const note = await readNoteFromDisk(context.options.vaultPath, workspace.tempNotePath);
+                assertManagedNoteShape(note);
+            }
         }
     }
 ];
@@ -457,7 +481,7 @@ async function waitForIndexedFile(context: E2EContext, vaultRelativePath: string
 }
 
 function extractDraftSection(body: string): string {
-    const match = body.match(/## New Comment\s*([\s\S]*?)## Comments/);
+    const match = body.match(/#{1,2} New Comment\s*([\s\S]*?)#{1,2} Comments/);
     return match?.[1] ?? '';
 }
 

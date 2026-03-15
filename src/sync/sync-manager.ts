@@ -1,10 +1,12 @@
 import { App, Notice, TFile } from 'obsidian';
 import { LinearClient } from '../api/linear-client';
 import { LinearIssue, LinearPluginSettings, LinearWorkspace, NoteFrontmatter, SyncResult } from '../models/types';
+import { MarkdownParser } from '../parsers/markdown-parser';
 import { parseFrontmatter, replaceNoteBody, updateFrontmatter } from '../utils/frontmatter';
 import {
     DEFAULT_COMMENT_SYNC_LABEL,
     ManagedNoteState,
+    DOCUMENT_SECTION,
     parseManagedNoteState,
     renderManagedNoteBody
 } from '../utils/synced-note';
@@ -18,8 +20,15 @@ interface IndexedNote {
 interface LocalPushOutcome {
     issue: LinearIssue;
     managedState?: ManagedNoteState;
+    frontmatterUpdates?: Partial<NoteFrontmatter>;
     skipPull: boolean;
     error?: string;
+}
+
+interface ResolvedDocumentSource {
+    content: string;
+    sourcePath: string;
+    title: string;
 }
 
 export class SyncManager {
@@ -54,7 +63,8 @@ export class SyncManager {
         file: TFile,
         issue: LinearIssue,
         workspace: LinearWorkspace,
-        managedState?: ManagedNoteState
+        managedState?: ManagedNoteState,
+        frontmatterPatch: Partial<NoteFrontmatter> = {}
     ): Promise<boolean> {
         const frontmatter = await this.getFrontmatter(file);
         const isNewNote = !frontmatter.linear_id && !frontmatter.linear_identifier;
@@ -84,7 +94,8 @@ export class SyncManager {
             linear_last_synced: syncTimestamp,
             linear_priority: issue.priority,
             linear_estimate: issue.estimate,
-            linear_labels: issue.labels.nodes.map(label => label.name)
+            linear_labels: issue.labels.nodes.map(label => label.name),
+            ...frontmatterPatch
         };
 
         await replaceNoteBody(this.app, file, nextBody);
@@ -117,6 +128,7 @@ export class SyncManager {
             await this.hydrateTrackedIssuesForComments(client, linkedNotes, workspace, issueMap);
             const skippedIssueIds = new Set<string>();
             const managedStateByIssueId = new Map<string, ManagedNoteState>();
+            const frontmatterUpdatesByIssueId = new Map<string, Partial<NoteFrontmatter>>();
 
             const modifiedNotes = this.getLocallyModifiedNotes(linkedNotes, workspace.id);
             for (const note of modifiedNotes) {
@@ -134,6 +146,10 @@ export class SyncManager {
 
                 if (pushOutcome.managedState) {
                     managedStateByIssueId.set(pushOutcome.issue.id, pushOutcome.managedState);
+                }
+
+                if (pushOutcome.frontmatterUpdates) {
+                    frontmatterUpdatesByIssueId.set(pushOutcome.issue.id, pushOutcome.frontmatterUpdates);
                 }
 
                 if (pushOutcome.skipPull) {
@@ -161,7 +177,8 @@ export class SyncManager {
                         file,
                         issue,
                         workspace,
-                        managedStateByIssueId.get(issue.id)
+                        managedStateByIssueId.get(issue.id),
+                        frontmatterUpdatesByIssueId.get(issue.id)
                     );
                     if (wasCreated) result.created++;
                     else result.updated++;
@@ -184,7 +201,7 @@ export class SyncManager {
         const filepath = `${workspace.syncFolder}/${filename}`;
         const content = renderManagedNoteBody(
             issue,
-            { draftText: '', syncLabel: DEFAULT_COMMENT_SYNC_LABEL },
+            { documentText: '', draftText: '', syncLabel: DEFAULT_COMMENT_SYNC_LABEL },
             this.settings.includeComments
         );
         return await this.app.vault.create(filepath, content);
@@ -205,10 +222,21 @@ export class SyncManager {
         const content = await this.app.vault.read(note.file);
         const managedState = parseManagedNoteState(content);
         const updates = await this.buildIssueUpdatePayload(client, note.frontmatter, issue, workspace);
+        const frontmatterUpdates: Partial<NoteFrontmatter> = {};
+        let documentSyncError: string | undefined;
 
         let nextIssue = issue;
         if (Object.keys(updates).length > 0) {
             nextIssue = await client.updateIssue(issue.id, updates);
+        }
+
+        try {
+            Object.assign(
+                frontmatterUpdates,
+                await this.syncIssueDocument(client, note, issue.id, managedState)
+            );
+        } catch (error) {
+            documentSyncError = `Failed to sync issue document for ${issue.identifier}: ${(error as Error).message}`;
         }
 
         if (managedState.draftText.trim()) {
@@ -221,10 +249,13 @@ export class SyncManager {
             return {
                 issue: nextIssue,
                 managedState: {
+                    documentText: managedState.documentText,
                     draftText: '',
                     syncLabel: new Date().toLocaleString()
                 },
-                skipPull: false
+                frontmatterUpdates,
+                skipPull: false,
+                error: documentSyncError
             };
         }
 
@@ -232,11 +263,19 @@ export class SyncManager {
             return {
                 issue: nextIssue,
                 managedState,
-                skipPull: false
+                frontmatterUpdates,
+                skipPull: false,
+                error: documentSyncError
             };
         }
 
-        return { issue, skipPull: false };
+        return {
+            issue,
+            managedState,
+            frontmatterUpdates,
+            skipPull: false,
+            error: documentSyncError
+        };
     }
 
     private async buildIssueUpdatePayload(
@@ -375,7 +414,17 @@ export class SyncManager {
             const lastSynced = Date.parse(note.frontmatter.linear_last_synced || '');
             if (Number.isNaN(lastSynced)) return true;
 
-            return note.file.stat.mtime > lastSynced;
+            if (note.file.stat.mtime > lastSynced) {
+                return true;
+            }
+
+            const sourcePath = this.normalizeString(note.frontmatter.linear_document_source_path);
+            if (!sourcePath) {
+                return false;
+            }
+
+            const sourceFile = this.app.vault.getAbstractFileByPath(sourcePath);
+            return this.isMarkdownFile(sourceFile) && sourceFile.stat.mtime > lastSynced;
         });
     }
 
@@ -505,5 +554,109 @@ export class SyncManager {
     // the next sync does not immediately treat a freshly synced note as a local edit.
     private createBufferedSyncTimestamp(): string {
         return new Date(Date.now() + 5000).toISOString();
+    }
+
+    private async syncIssueDocument(
+        client: LinearClient,
+        note: IndexedNote,
+        issueId: string,
+        managedState: ManagedNoteState
+    ): Promise<Partial<NoteFrontmatter>> {
+        const resolved = await this.resolveDocumentSource(note, managedState);
+        if (!resolved) {
+            return { linear_document_source_path: '' };
+        }
+
+        const nextFrontmatter: Partial<NoteFrontmatter> = {
+            linear_document_title: resolved.title,
+            linear_document_source_path: resolved.sourcePath
+        };
+
+        if (!resolved.content.trim()) {
+            return nextFrontmatter;
+        }
+
+        const documentId = this.normalizeString(note.frontmatter.linear_document_id);
+        if (!documentId) {
+            const created = await client.createIssueDocument(issueId, resolved.title, resolved.content);
+            return {
+                ...nextFrontmatter,
+                linear_document_id: created.id,
+                linear_document_title: created.title,
+                linear_document_updated: created.updatedAt
+            };
+        }
+
+        try {
+            const updated = await client.updateIssueDocument(documentId, issueId, resolved.title, resolved.content);
+            return {
+                ...nextFrontmatter,
+                linear_document_id: updated.id,
+                linear_document_title: updated.title,
+                linear_document_updated: updated.updatedAt
+            };
+        } catch {
+            const recreated = await client.createIssueDocument(issueId, resolved.title, resolved.content);
+            return {
+                ...nextFrontmatter,
+                linear_document_id: recreated.id,
+                linear_document_title: recreated.title,
+                linear_document_updated: recreated.updatedAt
+            };
+        }
+    }
+
+    private async resolveDocumentSource(
+        note: IndexedNote,
+        managedState: ManagedNoteState
+    ): Promise<ResolvedDocumentSource | null> {
+        const documentText = managedState.documentText.trim();
+        if (!documentText) {
+            return null;
+        }
+
+        const linkMatch = documentText.match(/\[\[([^\]]+)\]\]/);
+        if (!linkMatch) {
+            return {
+                content: MarkdownParser.convertToLinearDocumentContent(documentText),
+                sourcePath: '',
+                title: note.file.basename
+            };
+        }
+
+        const linkTarget = linkMatch[1].split('|')[0].trim();
+        if (!linkTarget) {
+            throw new Error(`${DOCUMENT_SECTION} contains an empty wikilink.`);
+        }
+
+        if (linkTarget.includes('#') || linkTarget.includes('^')) {
+            throw new Error(`Only plain note wikilinks are supported in ${DOCUMENT_SECTION}.`);
+        }
+
+        const sourceFile = this.app.metadataCache.getFirstLinkpathDest?.(linkTarget, note.file.path);
+        if (!this.isMarkdownFile(sourceFile)) {
+            throw new Error(`Unable to resolve linked document note: ${linkTarget}`);
+        }
+
+        if (sourceFile.path === note.file.path) {
+            throw new Error('The managed issue note cannot reference itself as the document source.');
+        }
+
+        const sourceContent = await this.app.vault.read(sourceFile);
+        return {
+            content: MarkdownParser.convertToLinearDocumentContent(sourceContent),
+            sourcePath: sourceFile.path,
+            title: sourceFile.basename
+        };
+    }
+
+    private isMarkdownFile(file: unknown): file is TFile {
+        return Boolean(
+            file &&
+            typeof (file as TFile).path === 'string' &&
+            typeof (file as TFile).basename === 'string' &&
+            typeof (file as TFile).extension === 'string' &&
+            (file as TFile).extension === 'md'
+        );
     }
 }

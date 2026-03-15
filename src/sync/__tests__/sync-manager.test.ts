@@ -8,7 +8,7 @@ jest.mock('obsidian', () => ({
 
 import { SyncManager } from '../sync-manager';
 import { LinearClient } from '../../api/linear-client';
-import { DEFAULT_SETTINGS, LinearIssue, LinearPluginSettings, LinearWorkspace, NoteFrontmatter } from '../../models/types';
+import { DEFAULT_SETTINGS, LinearDocument, LinearIssue, LinearPluginSettings, LinearWorkspace, NoteFrontmatter } from '../../models/types';
 
 type MockFile = {
     path: string;
@@ -31,6 +31,7 @@ type MockApp = {
     };
     metadataCache: {
         getFileCache: jest.Mock<{ frontmatter: NoteFrontmatter } | null, [MockFile]>;
+        getFirstLinkpathDest: jest.Mock<MockFile | null, [string, string]>;
     };
     fileManager: {
         processFrontMatter: jest.Mock<Promise<void>, [MockFile, (frontmatter: Record<string, unknown>) => void]>;
@@ -44,6 +45,8 @@ const addCommentByApiKey = new Map<string, jest.Mock<Promise<void>, [string, str
 const getTeamStatesByApiKey = new Map<string, jest.Mock<Promise<Array<{ id: string; name: string; type: string; color: string }>>, [string]>>();
 const getUsersByApiKey = new Map<string, jest.Mock<Promise<Array<{ id: string; name: string; email: string }>>, []>>();
 const getProjectsByApiKey = new Map<string, jest.Mock<Promise<Array<{ id: string; name: string; description?: string }>>, [string | undefined]>>();
+const createIssueDocumentByApiKey = new Map<string, jest.Mock<Promise<LinearDocument>, [string, string, string]>>();
+const updateIssueDocumentByApiKey = new Map<string, jest.Mock<Promise<LinearDocument>, [string, string, string, string]>>();
 
 function createWorkspace(overrides: Partial<LinearWorkspace> = {}): LinearWorkspace {
     return {
@@ -110,6 +113,42 @@ function createFile(path: string, frontmatter?: NoteFrontmatter, content: string
     };
 }
 
+function createManagedBody(options: {
+    documentText?: string;
+    draftText?: string;
+    commentsText?: string;
+    syncLabel?: string;
+} = {}): string {
+    const {
+        documentText = '',
+        draftText = '',
+        commentsText = '*No comments yet.*',
+        syncLabel = 'Never'
+    } = options;
+
+    const lines = [
+        '# Linear Issue',
+        '',
+        '[ENG-1](https://linear.app/issue/ENG-1)',
+        '',
+        '# Document',
+        ''
+    ];
+
+    if (documentText) {
+        lines.push(documentText, '');
+    }
+
+    lines.push('# New Comment', '', `--- Synced to Linear at ${syncLabel} ---`, '');
+
+    if (draftText) {
+        lines.push(draftText, '');
+    }
+
+    lines.push('# Comments', '', commentsText);
+    return `${lines.join('\n')}\n`;
+}
+
 function createMockApp(initialFiles: MockFile[] = []): MockApp {
     const files = [...initialFiles];
     const folders = new Set<string>(['Linear', 'Linear/Workspace 1', 'Linear/Workspace 2', 'Inbox']);
@@ -141,6 +180,9 @@ function createMockApp(initialFiles: MockFile[] = []): MockApp {
         metadataCache: {
             getFileCache: jest.fn((file: MockFile) =>
                 file.frontmatter ? { frontmatter: file.frontmatter } : null
+            ),
+            getFirstLinkpathDest: jest.fn((linkpath: string, _sourcePath: string) =>
+                files.find(file => file.basename === linkpath || file.path === linkpath || file.path === `${linkpath}.md`) ?? null
             )
         },
         fileManager: {
@@ -167,16 +209,34 @@ function registerClientMocks(apiKey: string, issue: LinearIssue): {
     getIssueByIdMock: jest.Mock<Promise<LinearIssue | null>, [string]>;
     updateIssueMock: jest.Mock<Promise<LinearIssue>, [string, Record<string, unknown>]>;
     addCommentMock: jest.Mock<Promise<void>, [string, string]>;
+    createIssueDocumentMock: jest.Mock<Promise<LinearDocument>, [string, string, string]>;
+    updateIssueDocumentMock: jest.Mock<Promise<LinearDocument>, [string, string, string, string]>;
 } {
     const getIssuesMock = jest.fn<Promise<LinearIssue[]>, [string | undefined, string | undefined]>().mockResolvedValue([issue]);
     const getIssueByIdMock = jest.fn<Promise<LinearIssue | null>, [string]>().mockResolvedValue(issue);
     const updateIssueMock = jest.fn<Promise<LinearIssue>, [string, Record<string, unknown>]>().mockResolvedValue(issue);
     const addCommentMock = jest.fn<Promise<void>, [string, string]>().mockResolvedValue();
+    const createIssueDocumentMock = jest.fn<Promise<LinearDocument>, [string, string, string]>().mockResolvedValue({
+        id: 'document-1',
+        title: 'ENG-1',
+        content: 'Document content',
+        updatedAt: '2026-03-02T00:00:00.000Z',
+        url: 'https://linear.app/document/document-1'
+    });
+    const updateIssueDocumentMock = jest.fn<Promise<LinearDocument>, [string, string, string, string]>().mockResolvedValue({
+        id: 'document-1',
+        title: 'ENG-1',
+        content: 'Document content',
+        updatedAt: '2026-03-03T00:00:00.000Z',
+        url: 'https://linear.app/document/document-1'
+    });
 
     getIssuesByApiKey.set(apiKey, getIssuesMock);
     getIssueByIdByApiKey.set(apiKey, getIssueByIdMock);
     updateIssueByApiKey.set(apiKey, updateIssueMock);
     addCommentByApiKey.set(apiKey, addCommentMock);
+    createIssueDocumentByApiKey.set(apiKey, createIssueDocumentMock);
+    updateIssueDocumentByApiKey.set(apiKey, updateIssueDocumentMock);
     getTeamStatesByApiKey.set(apiKey, jest.fn().mockResolvedValue([
         { id: 'state-1', name: 'Todo', type: 'unstarted', color: '#cccccc' },
         { id: 'state-2', name: 'Done', type: 'completed', color: '#00ff00' }
@@ -190,7 +250,7 @@ function registerClientMocks(apiKey: string, issue: LinearIssue): {
         { id: 'project-2', name: 'Beta' }
     ]));
 
-    return { getIssuesMock, getIssueByIdMock, updateIssueMock, addCommentMock };
+    return { getIssuesMock, getIssueByIdMock, updateIssueMock, addCommentMock, createIssueDocumentMock, updateIssueDocumentMock };
 }
 
 describe('SyncManager frontmatter-first sync', () => {
@@ -203,6 +263,8 @@ describe('SyncManager frontmatter-first sync', () => {
         getTeamStatesByApiKey.clear();
         getUsersByApiKey.clear();
         getProjectsByApiKey.clear();
+        createIssueDocumentByApiKey.clear();
+        updateIssueDocumentByApiKey.clear();
 
         jest.spyOn(LinearClient.prototype, 'getIssues').mockImplementation(function (
             this: { apiKey: string },
@@ -260,6 +322,29 @@ describe('SyncManager frontmatter-first sync', () => {
             if (!mock) throw new Error(`No getProjects mock configured for ${this.apiKey}`);
             return mock(teamId);
         });
+
+        jest.spyOn(LinearClient.prototype, 'createIssueDocument').mockImplementation(function (
+            this: { apiKey: string },
+            issueId: string,
+            title: string,
+            content: string
+        ) {
+            const mock = createIssueDocumentByApiKey.get(this.apiKey);
+            if (!mock) throw new Error(`No createIssueDocument mock configured for ${this.apiKey}`);
+            return mock(issueId, title, content);
+        });
+
+        jest.spyOn(LinearClient.prototype, 'updateIssueDocument').mockImplementation(function (
+            this: { apiKey: string },
+            id: string,
+            issueId: string,
+            title: string,
+            content: string
+        ) {
+            const mock = updateIssueDocumentByApiKey.get(this.apiKey);
+            if (!mock) throw new Error(`No updateIssueDocument mock configured for ${this.apiKey}`);
+            return mock(id, issueId, title, content);
+        });
     });
 
     afterEach(() => {
@@ -294,10 +379,11 @@ describe('SyncManager frontmatter-first sync', () => {
             linear_project_id: issue.project?.id,
             linear_team_id: issue.team.id
         }));
-        expect(createdFile.content).toContain('## Linear Issue');
+        expect(createdFile.content).toContain('# Linear Issue');
         expect(createdFile.content).toContain('[ENG-1](https://linear.app/issue/ENG-1)');
-        expect(createdFile.content).toContain('## New Comment');
-        expect(createdFile.content).toContain('## Comments');
+        expect(createdFile.content).toContain('# Document');
+        expect(createdFile.content).toContain('# New Comment');
+        expect(createdFile.content).toContain('# Comments');
         expect(createdFile.content).toContain('Remote comment');
         expect(createdFile.content).not.toContain('Issue description');
     });
@@ -326,7 +412,7 @@ describe('SyncManager frontmatter-first sync', () => {
                     linear_labels: ['bug', 'backend'],
                     linear_last_synced: '2026-03-10T00:00:00.000Z'
                 },
-                '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+                createManagedBody(),
                 Date.parse('2026-03-11T00:00:00.000Z')
             )
         ]);
@@ -387,7 +473,7 @@ describe('SyncManager frontmatter-first sync', () => {
                 linear_team_id: 'team-999',
                 linear_last_synced: '2026-03-10T00:00:00.000Z'
             },
-            '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+            createManagedBody(),
             Date.parse('2026-03-11T00:00:00.000Z')
         );
         const app = createMockApp([file]);
@@ -429,7 +515,7 @@ describe('SyncManager frontmatter-first sync', () => {
                 linear_team_id: baseIssue.team.id,
                 linear_last_synced: '2026-03-10T00:00:00.000Z'
             },
-            '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\nDraft comment from Obsidian\n\n## Comments\n\n*No comments yet.*\n',
+            createManagedBody({ draftText: 'Draft comment from Obsidian' }),
             Date.parse('2026-03-11T00:00:00.000Z')
         );
         const app = createMockApp([file]);
@@ -443,7 +529,7 @@ describe('SyncManager frontmatter-first sync', () => {
         await manager.syncAll();
 
         expect(addCommentMock).toHaveBeenCalledWith(baseIssue.id, 'Draft comment from Obsidian');
-        expect(file.content).toContain('## Comments');
+        expect(file.content).toContain('# Comments');
         expect(file.content).toContain('Draft comment from Obsidian');
         expect(file.content).not.toContain('--- Synced to Linear at Never ---\nDraft comment from Obsidian');
         expect(file.content).toMatch(/--- Synced to Linear at .* ---/);
@@ -499,7 +585,7 @@ describe('SyncManager frontmatter-first sync', () => {
                 linear_team_id: baseIssue.team.id,
                 linear_last_synced: '2026-03-10T00:00:00.000Z'
             },
-            '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+            createManagedBody(),
             Date.parse('2026-03-09T00:00:00.000Z')
         );
         const app = createMockApp([file]);
@@ -516,6 +602,177 @@ describe('SyncManager frontmatter-first sync', () => {
         expect(updateIssueMock).not.toHaveBeenCalled();
         expect(result.updated).toBe(1);
         expect(file.content).toContain('Remote comment only');
+    });
+
+    it('repairs missing managed sections on linked notes during sync', async () => {
+        const workspace = createWorkspace({ lastSyncTime: '2026-03-10T00:00:00.000Z' });
+        const issue = createIssue();
+        const file = createFile(
+            'Linear/Workspace 1/ENG-1.md',
+            {
+                linear_workspace_id: workspace.id,
+                linear_id: issue.id,
+                linear_identifier: issue.identifier,
+                linear_title: issue.title,
+                linear_description: issue.description,
+                linear_status: issue.state.name,
+                linear_team: issue.team.name,
+                linear_team_id: issue.team.id,
+                linear_last_synced: '2026-03-10T00:00:00.000Z'
+            },
+            '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## Comments\n\n*No comments yet.*\n',
+            Date.parse('2026-03-09T00:00:00.000Z')
+        );
+        const app = createMockApp([file]);
+        const plugin = { saveSettings: jest.fn(async () => undefined) };
+        const settings = createSettings([workspace]);
+        const { getIssuesMock } = registerClientMocks(workspace.apiKey, issue);
+        getIssuesMock.mockResolvedValue([issue]);
+
+        const manager = new SyncManager(app as never, settings, plugin);
+        await manager.syncAll();
+
+        expect(file.content).toContain('# Document');
+        expect(file.content).toContain('# New Comment');
+        expect(file.content).toContain('# Comments');
+    });
+
+    it('creates an issue document from inline document text', async () => {
+        const workspace = createWorkspace({ lastSyncTime: '2026-03-10T00:00:00.000Z' });
+        const issue = createIssue();
+        const file = createFile(
+            'Linear/Workspace 1/ENG-1.md',
+            {
+                linear_workspace_id: workspace.id,
+                linear_id: issue.id,
+                linear_identifier: issue.identifier,
+                linear_title: issue.title,
+                linear_description: issue.description,
+                linear_status: issue.state.name,
+                linear_team: issue.team.name,
+                linear_team_id: issue.team.id,
+                linear_last_synced: '2026-03-10T00:00:00.000Z'
+            },
+            createManagedBody({ documentText: 'Inline document body' }),
+            Date.parse('2026-03-11T00:00:00.000Z')
+        );
+        const app = createMockApp([file]);
+        const plugin = { saveSettings: jest.fn(async () => undefined) };
+        const settings = createSettings([workspace]);
+        const { getIssuesMock, getIssueByIdMock, createIssueDocumentMock } = registerClientMocks(workspace.apiKey, issue);
+        getIssuesMock.mockResolvedValue([]);
+        getIssueByIdMock.mockResolvedValue(issue);
+        createIssueDocumentMock.mockResolvedValue({
+            id: 'document-42',
+            title: 'ENG-1',
+            content: 'Inline document body',
+            updatedAt: '2026-03-12T00:00:00.000Z',
+            url: 'https://linear.app/document/document-42'
+        });
+
+        const manager = new SyncManager(app as never, settings, plugin);
+        await manager.syncAll();
+
+        expect(createIssueDocumentMock).toHaveBeenCalledWith(issue.id, 'ENG-1', 'Inline document body');
+        expect(file.frontmatter).toEqual(expect.objectContaining({
+            linear_document_id: 'document-42',
+            linear_document_title: 'ENG-1',
+            linear_document_updated: '2026-03-12T00:00:00.000Z',
+            linear_document_source_path: ''
+        }));
+    });
+
+    it('updates an issue document when the linked source note changes', async () => {
+        const workspace = createWorkspace({ lastSyncTime: '2026-03-10T00:00:00.000Z' });
+        const issue = createIssue();
+        const issueNote = createFile(
+            'Linear/Workspace 1/ENG-1.md',
+            {
+                linear_workspace_id: workspace.id,
+                linear_id: issue.id,
+                linear_identifier: issue.identifier,
+                linear_title: issue.title,
+                linear_description: issue.description,
+                linear_status: issue.state.name,
+                linear_team: issue.team.name,
+                linear_team_id: issue.team.id,
+                linear_document_id: 'document-1',
+                linear_document_source_path: 'Docs/Source Note.md',
+                linear_last_synced: '2026-03-10T00:00:00.000Z'
+            },
+            createManagedBody({ documentText: '[[Source Note]]' }),
+            Date.parse('2026-03-09T00:00:00.000Z')
+        );
+        const sourceNote = createFile(
+            'Docs/Source Note.md',
+            undefined,
+            '# Source Note\n\nUpdated source body',
+            Date.parse('2026-03-11T00:00:00.000Z')
+        );
+        const app = createMockApp([issueNote, sourceNote]);
+        const plugin = { saveSettings: jest.fn(async () => undefined) };
+        const settings = createSettings([workspace]);
+        const { getIssuesMock, getIssueByIdMock, updateIssueDocumentMock } = registerClientMocks(workspace.apiKey, issue);
+        getIssuesMock.mockResolvedValue([]);
+        getIssueByIdMock.mockResolvedValue(issue);
+        updateIssueDocumentMock.mockResolvedValue({
+            id: 'document-1',
+            title: 'Source Note',
+            content: '# Source Note\n\nUpdated source body',
+            updatedAt: '2026-03-12T00:00:00.000Z',
+            url: 'https://linear.app/document/document-1'
+        });
+
+        const manager = new SyncManager(app as never, settings, plugin);
+        await manager.syncAll();
+
+        expect(updateIssueDocumentMock).toHaveBeenCalledWith(
+            'document-1',
+            issue.id,
+            'Source Note',
+            '# Source Note\n\nUpdated source body'
+        );
+        expect(issueNote.frontmatter).toEqual(expect.objectContaining({
+            linear_document_id: 'document-1',
+            linear_document_title: 'Source Note',
+            linear_document_source_path: 'Docs/Source Note.md'
+        }));
+    });
+
+    it('reports invalid document wikilinks without mutating the remote document', async () => {
+        const workspace = createWorkspace({ lastSyncTime: '2026-03-10T00:00:00.000Z' });
+        const issue = createIssue();
+        const file = createFile(
+            'Linear/Workspace 1/ENG-1.md',
+            {
+                linear_workspace_id: workspace.id,
+                linear_id: issue.id,
+                linear_identifier: issue.identifier,
+                linear_title: issue.title,
+                linear_description: issue.description,
+                linear_status: issue.state.name,
+                linear_team: issue.team.name,
+                linear_team_id: issue.team.id,
+                linear_last_synced: '2026-03-10T00:00:00.000Z'
+            },
+            createManagedBody({ documentText: '[[Missing Note]]' }),
+            Date.parse('2026-03-11T00:00:00.000Z')
+        );
+        const app = createMockApp([file]);
+        const plugin = { saveSettings: jest.fn(async () => undefined) };
+        const settings = createSettings([workspace]);
+        const { getIssuesMock, getIssueByIdMock, createIssueDocumentMock, updateIssueDocumentMock } = registerClientMocks(workspace.apiKey, issue);
+        getIssuesMock.mockResolvedValue([]);
+        getIssueByIdMock.mockResolvedValue(issue);
+
+        const manager = new SyncManager(app as never, settings, plugin);
+        const result = await manager.syncAll();
+
+        expect(createIssueDocumentMock).not.toHaveBeenCalled();
+        expect(updateIssueDocumentMock).not.toHaveBeenCalled();
+        expect(result.errors).toEqual(expect.arrayContaining([
+            expect.stringContaining('Unable to resolve linked document note')
+        ]));
     });
 
     it('clears the remote project when local project frontmatter is emptied', async () => {
@@ -537,7 +794,7 @@ describe('SyncManager frontmatter-first sync', () => {
                     linear_team_id: remoteIssue.team.id,
                     linear_last_synced: '2026-03-10T00:00:00.000Z'
                 },
-                '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+                createManagedBody(),
                 Date.parse('2026-03-11T00:00:00.000Z')
             )
         ]);
@@ -580,7 +837,7 @@ describe('SyncManager frontmatter-first sync', () => {
                 linear_team_id: remoteIssue.team.id,
                 linear_last_synced: '2026-03-10T00:00:00.000Z'
             },
-            '## Linear Issue\n\n[ENG-1](https://linear.app/issue/ENG-1)\n\n## New Comment\n\n--- Synced to Linear at Never ---\n\n## Comments\n\n*No comments yet.*\n',
+            createManagedBody(),
             Date.parse('2026-03-11T00:00:00.000Z')
         );
         const app = createMockApp([file]);

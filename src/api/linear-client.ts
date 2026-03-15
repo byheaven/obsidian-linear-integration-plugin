@@ -1,5 +1,5 @@
 import { debugLog } from '../utils/debug';
-import { LinearIssue, LinearProject, LinearState, LinearTeam, LinearUser } from '../models/types';
+import { LinearDocument, LinearIssue, LinearProject, LinearState, LinearTeam, LinearUser } from '../models/types';
 
 const ISSUE_FIELDS = `
     id
@@ -48,6 +48,14 @@ const ISSUE_FIELDS = `
             createdAt
         }
     }
+`;
+
+const DOCUMENT_FIELDS = `
+    id
+    title
+    content
+    url
+    updatedAt
 `;
 
 export class LinearClient {
@@ -154,6 +162,78 @@ export class LinearClient {
 
         const data = await this.makeRequest(query, { id });
         return data.issue;
+    }
+
+    async getIssueDocuments(issueId: string): Promise<LinearDocument[]> {
+        const query = `
+            query($issueId: String!) {
+                issue(id: $issueId) {
+                    documents {
+                        nodes {
+                            ${DOCUMENT_FIELDS}
+                        }
+                    }
+                }
+            }
+        `;
+
+        const data = await this.makeRequest(query, { issueId });
+        return data.issue?.documents?.nodes ?? [];
+    }
+
+    async createIssueDocument(issueId: string, title: string, content: string): Promise<LinearDocument> {
+        const query = `
+            mutation($input: DocumentCreateInput!) {
+                documentCreate(input: $input) {
+                    success
+                    document {
+                        ${DOCUMENT_FIELDS}
+                    }
+                }
+            }
+        `;
+
+        const data = await this.makeRequest(query, {
+            input: {
+                issueId,
+                title,
+                content
+            }
+        });
+
+        if (!data.documentCreate?.success) {
+            throw new Error('Failed to create Linear document');
+        }
+
+        return data.documentCreate.document;
+    }
+
+    async updateIssueDocument(id: string, issueId: string, title: string, content: string): Promise<LinearDocument> {
+        const query = `
+            mutation($id: String!, $input: DocumentUpdateInput!) {
+                documentUpdate(id: $id, input: $input) {
+                    success
+                    document {
+                        ${DOCUMENT_FIELDS}
+                    }
+                }
+            }
+        `;
+
+        const data = await this.makeRequest(query, {
+            id,
+            input: {
+                issueId,
+                title,
+                content
+            }
+        });
+
+        if (!data.documentUpdate?.success) {
+            throw new Error('Failed to update Linear document');
+        }
+
+        return data.documentUpdate.document;
     }
 
     async createIssue(input: {

@@ -205,8 +205,21 @@ linear_last_synced: "2024-01-16T14:25:00Z"
 linear_priority: 1
 linear_estimate: 5
 linear_labels: ["bug", "frontend", "critical"]
+linear_document_id: "document-uuid"
+linear_document_title: "Spec Note"
+linear_document_updated: "2024-01-16T14:26:00Z"
+linear_document_source_path: "Specs/Spec Note.md"
 ---
 ```
+
+Synced issue notes are rendered into a managed body shell with these sections:
+
+- `# Linear Issue`
+- `# Document`
+- `# New Comment`
+- `# Comments`
+
+The plugin repairs missing managed sections during sync. If `# Document` contains a wikilink such as `[[Spec Note]]`, the linked note becomes the source for the managed Linear issue document. Without a wikilink, the `# Document` section text itself is pushed to the managed issue document.
 
 ### Custom Templates
 

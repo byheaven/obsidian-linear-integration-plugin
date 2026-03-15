@@ -22,4 +22,25 @@ describe('MarkdownParser', () => {
             'This text should survive tag stripping.'
         ].join('\n'));
     });
+
+    it('keeps headings when converting note content for Linear documents', () => {
+        const content = [
+            '---',
+            'foo: bar',
+            '---',
+            '# Source Note',
+            '',
+            'Body text',
+            '',
+            '[[Another Note]]'
+        ].join('\n');
+
+        expect(MarkdownParser.convertToLinearDocumentContent(content)).toBe([
+            '# Source Note',
+            '',
+            'Body text',
+            '',
+            '[Another Note]'
+        ].join('\n'));
+    });
 });

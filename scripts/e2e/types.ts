@@ -113,6 +113,10 @@ export interface NoteFrontmatter {
     linear_priority?: number;
     linear_estimate?: number;
     linear_labels?: string[];
+    linear_document_id?: string;
+    linear_document_title?: string;
+    linear_document_updated?: string;
+    linear_document_source_path?: string;
     [key: string]: unknown;
 }
 

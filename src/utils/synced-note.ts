@@ -1,13 +1,18 @@
 import { LinearIssue } from '../models/types';
 
-export const LINEAR_ISSUE_SECTION = '## Linear Issue';
-export const NEW_COMMENT_SECTION = '## New Comment';
-export const COMMENTS_SECTION = '## Comments';
+export const LINEAR_ISSUE_SECTION = '# Linear Issue';
+export const DOCUMENT_SECTION = '# Document';
+export const NEW_COMMENT_SECTION = '# New Comment';
+export const COMMENTS_SECTION = '# Comments';
+const LEGACY_DOCUMENT_SECTION = '## Document';
+const LEGACY_NEW_COMMENT_SECTION = '## New Comment';
+const LEGACY_COMMENTS_SECTION = '## Comments';
 export const COMMENT_SYNC_PREFIX = '--- Synced to Linear at ';
 export const COMMENT_SYNC_SUFFIX = ' ---';
 export const DEFAULT_COMMENT_SYNC_LABEL = 'Never';
 
 export interface ManagedNoteState {
+    documentText: string;
     draftText: string;
     syncLabel: string;
 }
@@ -17,25 +22,24 @@ export function createCommentSyncMarker(syncLabel: string): string {
 }
 
 export function parseManagedNoteState(content: string): ManagedNoteState {
-    const newCommentStart = content.indexOf(NEW_COMMENT_SECTION);
-    if (newCommentStart < 0) {
+    const documentSection = readManagedSection(content, [DOCUMENT_SECTION, LEGACY_DOCUMENT_SECTION], [NEW_COMMENT_SECTION, LEGACY_NEW_COMMENT_SECTION, COMMENTS_SECTION, LEGACY_COMMENTS_SECTION]);
+    const draftSection = readManagedSection(content, [NEW_COMMENT_SECTION, LEGACY_NEW_COMMENT_SECTION], [COMMENTS_SECTION, LEGACY_COMMENTS_SECTION]);
+
+    if (!draftSection) {
         return {
+            documentText: documentSection?.trim() ?? '',
             draftText: '',
             syncLabel: DEFAULT_COMMENT_SYNC_LABEL
         };
     }
 
-    const commentsStart = content.indexOf(COMMENTS_SECTION, newCommentStart + NEW_COMMENT_SECTION.length);
-    const draftSection = content
-        .slice(newCommentStart + NEW_COMMENT_SECTION.length, commentsStart >= 0 ? commentsStart : undefined)
-        .trimStart();
-
     const lines = draftSection.split('\n');
     const markerLine = lines[0]?.trim();
     const syncLabel = extractSyncLabel(markerLine) ?? DEFAULT_COMMENT_SYNC_LABEL;
-    const draftText = lines.slice(1).join('\n').trim();
+    const draftText = (extractSyncLabel(markerLine) ? lines.slice(1) : lines).join('\n').trim();
 
     return {
+        documentText: documentSection?.trim() ?? '',
         draftText,
         syncLabel
     };
@@ -52,11 +56,20 @@ export function renderManagedNoteBody(
         '',
         `[${issue.identifier}](${issue.url})`,
         '',
+        DOCUMENT_SECTION,
+        ''
+    ];
+
+    if (state.documentText) {
+        lines.push(state.documentText.trimEnd(), '');
+    }
+
+    lines.push(
         NEW_COMMENT_SECTION,
         '',
         createCommentSyncMarker(state.syncLabel),
         ''
-    ];
+    );
 
     if (state.draftText) {
         lines.push(state.draftText.trimEnd(), '');
@@ -89,4 +102,26 @@ function extractSyncLabel(markerLine?: string): string | null {
     }
 
     return markerLine.slice(COMMENT_SYNC_PREFIX.length, markerLine.length - COMMENT_SYNC_SUFFIX.length).trim() || null;
+}
+
+function readManagedSection(content: string, sectionHeadings: string[], nextHeadings: string[]): string | null {
+    const startHeading = sectionHeadings
+        .map(heading => ({ heading, index: content.indexOf(heading) }))
+        .filter(item => item.index >= 0)
+        .sort((left, right) => left.index - right.index)[0];
+
+    if (!startHeading) {
+        return null;
+    }
+
+    const bodyStart = startHeading.index + startHeading.heading.length;
+    const bodyEnd = nextHeadings
+        .map(heading => content.indexOf(heading, bodyStart))
+        .filter(index => index >= 0)
+        .sort((left, right) => left - right)[0];
+
+    return content
+        .slice(bodyStart, bodyEnd)
+        .replace(/^\n+/, '')
+        .trimEnd();
 }

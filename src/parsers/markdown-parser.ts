@@ -84,7 +84,7 @@ export class MarkdownParser {
 
     static convertToLinearDescription(content: string): string {
         // Remove frontmatter
-        let description = content.replace(/^---\n[\s\S]*?\n---\n?/, '');
+        let description = this.stripFrontmatter(content);
 
         // Remove the first heading because title is stored separately.
         description = description.replace(/^#\s+.+\n/, '');
@@ -99,6 +99,10 @@ export class MarkdownParser {
         description = this.convertObsidianToLinear(description);
         
         return description.trim();
+    }
+
+    static convertToLinearDocumentContent(content: string): string {
+        return this.convertObsidianToLinear(this.stripFrontmatter(content)).trim();
     }
 
     private static convertObsidianToLinear(content: string): string {
@@ -118,6 +122,10 @@ export class MarkdownParser {
         });
         
         return content;
+    }
+
+    private static stripFrontmatter(content: string): string {
+        return content.replace(/^---\n[\s\S]*?\n---\n?/, '');
     }
 
     static extractTitle(content: string): string {

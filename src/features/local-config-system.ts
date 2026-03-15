@@ -298,7 +298,9 @@ export class CommentMirror {
         const commentsSection = this.generateCommentsSection(issue.comments.nodes);
         
         // Find existing comments section or add new one
-        const commentsStart = content.indexOf('## Comments');
+        const commentsStart = content.indexOf('# Comments') >= 0
+            ? content.indexOf('# Comments')
+            : content.indexOf('## Comments');
         
         if (commentsStart >= 0) {
             // Replace existing comments section
@@ -317,10 +319,10 @@ export class CommentMirror {
 
     private generateCommentsSection(comments: any[]): string {
         if (comments.length === 0) {
-            return '## Comments\n\n*No comments yet.*';
+            return '# Comments\n\n*No comments yet.*';
         }
 
-        let section = '## Comments\n\n';
+        let section = '# Comments\n\n';
         
         comments.forEach(comment => {
             const author = comment.user.name;

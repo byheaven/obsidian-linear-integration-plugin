@@ -313,6 +313,7 @@ export default class LinearPlugin extends Plugin {
 
                 try {
                     await this.syncManager.updateNoteWithIssue(file, issue, workspace, {
+                        documentText: '',
                         draftText: '',
                         syncLabel: new Date().toLocaleString()
                     });

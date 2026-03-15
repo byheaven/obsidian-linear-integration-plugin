@@ -33,9 +33,10 @@ export function assertFilePathInsideVault(vaultRelativePath: string): void {
 }
 
 export function buildManagedBodyExpectations(body: string): boolean {
-    return body.includes('## Linear Issue')
-        && body.includes('## New Comment')
-        && body.includes('## Comments')
+    return (body.includes('# Linear Issue') || body.includes('## Linear Issue'))
+        && (body.includes('# Document') || body.includes('## Document'))
+        && (body.includes('# New Comment') || body.includes('## New Comment'))
+        && (body.includes('# Comments') || body.includes('## Comments'))
         && body.includes('--- Synced to Linear at ');
 }
 
