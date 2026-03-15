@@ -2,9 +2,10 @@ import { debugLog } from './src/utils/debug';
 import { Plugin, TFile, Notice, MarkdownView, Editor } from 'obsidian';
 import { LinearClient } from './src/api/linear-client';
 import { SyncManager } from './src/sync/sync-manager';
+import { formatSyncSummaryNoticeText, SYNC_NOTICE_DURATION } from './src/sync/sync-summary';
 import { LinearSettingsTab } from './src/ui/settings-tab';
 import { IssueCreateModal } from './src/ui/issue-modal';
-import { LinearPluginSettings, LinearWorkspace, DEFAULT_SETTINGS, ConflictInfo, FileExplorerView } from './src/models/types';
+import { LinearPluginSettings, LinearWorkspace, DEFAULT_SETTINGS, ConflictInfo, FileExplorerView, SyncResult } from './src/models/types';
 import { LinearAutocompleteSystem, TooltipManager, QuickEditModal } from './src/features/autocomplete-system';
 import { ConflictResolver, ConflictHistory } from './src/features/conflict-resolver';
 import { LocalConfigManager, KanbanGenerator, AgendaGenerator, CommentMirror, BatchOperationManager } from './src/features/local-config-system';
@@ -13,6 +14,7 @@ import { MarkdownParser } from './src/parsers/markdown-parser';
 export default class LinearPlugin extends Plugin {
     settings!: LinearPluginSettings;
     private _clientCache = new Map<string, LinearClient>();
+    lastSyncSummaryNotice: string | null = null;
     syncManager!: SyncManager;
     autocompleteSystem?: LinearAutocompleteSystem;
     conflictResolver!: ConflictResolver;
@@ -23,6 +25,10 @@ export default class LinearPlugin extends Plugin {
     commentMirror!: CommentMirror;
     batchOperationManager!: BatchOperationManager;
     tooltipManager!: TooltipManager;
+
+    getLastSyncSummaryNotice(): string | null {
+        return this.lastSyncSummaryNotice;
+    }
 
     getDefaultWorkspace(): LinearWorkspace | null {
         const id = this.settings.defaultWorkspaceId;
@@ -78,14 +84,7 @@ export default class LinearPlugin extends Plugin {
 
         // Add ribbon icons
         this.addRibbonIcon('sync', 'Sync with Linear', async () => {
-            new Notice('Syncing with Linear...');
-            try {
-                await this.syncManager.syncAll();
-                new Notice('Linear sync completed');
-            } catch (error) {
-                new Notice(`Sync failed: ${(error as Error).message}`);
-                debugLog.error('Linear sync error:', error);
-            }
+            await this.runTopLevelSync({ startNotice: 'Syncing with Linear...' });
         });
 
         this.addRibbonIcon('kanban', 'Generate Kanban board', async () => {
@@ -118,7 +117,7 @@ export default class LinearPlugin extends Plugin {
             id: 'sync-linear-issues',
             name: 'Sync Linear issues',
             callback: async () => {
-                await this.syncManager.syncAll();
+                await this.runTopLevelSync();
             }
         });
 
@@ -208,14 +207,18 @@ export default class LinearPlugin extends Plugin {
 
         // Auto-sync on startup if enabled
         if (this.settings.autoSync) {
-            setTimeout(() => this.syncManager.syncAll(), 2000);
+            setTimeout(() => {
+                void this.runTopLevelSync();
+            }, 2000);
         }
 
         // Set up periodic sync if enabled
         if (this.settings.autoSyncInterval > 0) {
             this.registerInterval(
                 window.setInterval(
-                    () => this.syncManager.syncAll(),
+                    () => {
+                        void this.runTopLevelSync();
+                    },
                     this.settings.autoSyncInterval * 60000
                 )
             );
@@ -466,39 +469,69 @@ export default class LinearPlugin extends Plugin {
 
     // Enhanced sync with conflict detection
     async syncWithConflictResolution(): Promise<void> {
-        new Notice('Syncing with conflict detection...');
-        
+        try {
+            const syncResult = await this.runTopLevelSync({
+                startNotice: 'Syncing with conflict detection...',
+                resolveConflicts: true
+            });
+
+            if (!syncResult) {
+                return;
+            }
+        } catch (error) {
+            debugLog.error('Sync with conflict resolution failed unexpectedly:', error);
+        }
+    }
+
+    private async runTopLevelSync(options: {
+        startNotice?: string;
+        resolveConflicts?: boolean;
+    } = {}): Promise<SyncResult | null> {
+        const { startNotice, resolveConflicts = false } = options;
+        this.lastSyncSummaryNotice = null;
+
+        if (startNotice) {
+            new Notice(startNotice);
+        }
+
         try {
             const syncResult = await this.syncManager.syncAll();
-            
-            if (syncResult.conflicts.length > 0) {
-                new Notice(`${syncResult.conflicts.length} conflicts detected`);
-                
-                const resolutions = await this.conflictResolver.resolveConflicts(syncResult.conflicts);
-                
-                // Apply resolutions
-                for (const [conflictKey, resolution] of Object.entries(resolutions)) {
-                    const [issueId, field] = conflictKey.split('-');
-                    const conflict = syncResult.conflicts.find(c => c.issueId === issueId && c.field === field);
-                    
-                    if (conflict) {
-                        await this.applyConflictResolution(conflict, resolution);
-                        this.conflictHistory.addConflict(conflict);
-                    }
-                }
-                
-                new Notice('Conflicts resolved and sync completed');
-            } else {
-                new Notice(`Sync completed: ${syncResult.created} created, ${syncResult.updated} updated`);
+
+            if (resolveConflicts) {
+                await this.resolveSyncConflicts(syncResult);
             }
-            
+
             if (syncResult.errors.length > 0) {
                 debugLog.error('Sync errors:', syncResult.errors);
-                new Notice(`${syncResult.errors.length} errors occurred during sync`);
             }
+
+            const summary = formatSyncSummaryNoticeText(syncResult);
+            this.lastSyncSummaryNotice = summary;
+            new Notice(summary, SYNC_NOTICE_DURATION);
+            return syncResult;
         } catch (error) {
             new Notice(`Sync failed: ${(error as Error).message}`);
             debugLog.error('Sync error:', error);
+            return null;
+        }
+    }
+
+    private async resolveSyncConflicts(syncResult: SyncResult): Promise<void> {
+        if (syncResult.conflicts.length === 0) {
+            return;
+        }
+
+        new Notice(`${syncResult.conflicts.length} conflicts detected`);
+        const resolutions = await this.conflictResolver.resolveConflicts(syncResult.conflicts);
+
+        for (const [conflictKey, resolution] of Object.entries(resolutions)) {
+            const [issueId, field] = conflictKey.split('-');
+            const conflict = syncResult.conflicts.find(c => c.issueId === issueId && c.field === field);
+
+            if (conflict) {
+                await this.applyConflictResolution(conflict, resolution);
+                this.conflictHistory.addConflict(conflict);
+            }
         }
     }
 

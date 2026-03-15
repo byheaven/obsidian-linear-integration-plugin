@@ -1,6 +1,6 @@
 {
   "name": "linear-integration-plugin",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Comprehensive Linear (https://linear.app) integration plugin for Obsidian with bidirectional sync, autocomplete, and advanced features. Create, update, and track Linear issues directly from your vault.",
   "main": "main.js",
   "scripts": {

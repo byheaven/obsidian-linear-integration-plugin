@@ -257,6 +257,29 @@ export const cases: CaseDefinition[] = [
                 assertManagedNoteShape(note);
             }
         }
+    },
+    {
+        id: 'WS-011',
+        name: 'Show sync summary notice',
+        summary: 'A top-level Obsidian sync command should display the verbose sync summary notice.',
+        smoke: false,
+        run: async (context) => {
+            const notices = await runSyncCommandAndCaptureNotices(context, 'ws-011');
+            const summaryNotice = notices.find(notice =>
+                notice.includes('Linear Integration') &&
+                notice.includes('Created:') &&
+                notice.includes('Updated:') &&
+                notice.includes('Conflicts:') &&
+                notice.includes('Errors:')
+            );
+
+            assert(summaryNotice, 'Expected the sync command to emit a summary notice');
+            assert(summaryNotice.includes('Linear Integration'), 'Summary notice is missing the plugin title');
+            assert(/Created:\s+\d+/.test(summaryNotice), 'Summary notice is missing the created count');
+            assert(/Updated:\s+\d+/.test(summaryNotice), 'Summary notice is missing the updated count');
+            assert(/Conflicts:\s+\d+/.test(summaryNotice), 'Summary notice is missing the conflict count');
+            assert(/Errors:\s+\d+/.test(summaryNotice), 'Summary notice is missing the error count');
+        }
     }
 ];
 
@@ -409,6 +432,42 @@ async function syncAndCapture(context: E2EContext, artifactPrefix: string): Prom
 
     await context.captureArtifact(`${artifactPrefix}/dev-errors.txt`, await context.obsidian.getErrors());
     await context.captureArtifact(`${artifactPrefix}/console-errors.txt`, await context.obsidian.getConsole('error'));
+}
+
+async function runSyncCommandAndCaptureNotices(context: E2EContext, artifactPrefix: string): Promise<string[]> {
+    await context.obsidian.eval(
+        `
+            (async () => {
+                const commandId = "${context.options.pluginId}:sync-linear-issues";
+                const plugin = app.plugins.plugins["${context.options.pluginId}"];
+                if (!plugin) throw new Error("Plugin not loaded");
+
+                const command = app.commands.commands[commandId];
+                if (!command || typeof command.callback !== "function") {
+                    throw new Error("Sync command callback not found");
+                }
+
+                await command.callback();
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                return JSON.stringify({ completed: true });
+            })()
+        `
+    );
+
+    const summaryNotice = await context.obsidian.evalJson<string | null>(
+        `
+            (() => {
+                const plugin = app.plugins.plugins["${context.options.pluginId}"];
+                return JSON.stringify(plugin?.getLastSyncSummaryNotice?.() ?? null);
+            })()
+        `
+    );
+    const notices = summaryNotice ? [summaryNotice] : [];
+
+    await context.captureArtifact(`${artifactPrefix}/notices.json`, JSON.stringify(notices, null, 2));
+    await context.captureArtifact(`${artifactPrefix}/dev-errors.txt`, await context.obsidian.getErrors());
+    await context.captureArtifact(`${artifactPrefix}/console-errors.txt`, await context.obsidian.getConsole('error'));
+    return notices;
 }
 
 function requireIssue(workspace: WorkspaceRuntime): LinearIssue {

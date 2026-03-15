@@ -91,6 +91,8 @@ Enable "Auto-fill from Note Expressions" in settings to automatically populate i
 
 Use the sync button in the ribbon or run "Sync Linear Issues" command to pull your Linear issues into Obsidian.
 
+After each top-level sync, Obsidian shows a `Linear Integration` summary notice with created, updated, conflict, and error counts.
+
 ## 📖 Documentation
 
 ### Enhanced Inline Tag Syntax
